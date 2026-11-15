@@ -8,7 +8,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+import structlog
+
+from codeforge.config import current_identity
 from codeforge.guard.pii import mask_obj, mask_text
+from codeforge.observability import current_request_id
 
 
 @dataclass
@@ -38,6 +42,9 @@ def submit(
 
         graph = build_graph()
     tid = thread_id or new_thread_id()
+    # Bind ids for metering (request_id) and structured logs (thread_id, user_id).
+    current_request_id.set(tid)
+    structlog.contextvars.bind_contextvars(thread_id=tid, user_id=current_identity().user_id)
     config = {"configurable": {"thread_id": tid}}
     initial: dict[str, Any] = {
         "thread_id": tid,

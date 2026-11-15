@@ -314,11 +314,14 @@ def route_after_approval(
 
 def route_after_sandbox(
     state: CodeForgeState,
-) -> Literal["evaluator", "codegen", "escalate_check"]:
+) -> Literal["evaluator", "cache_store", "codegen", "escalate_check"]:
     res = state.get("run_result")
     attempts = state.get("attempts", 0)
     if res and res.exit_code == 0 and not res.timed_out:
-        return "evaluator"
+        # Review only fresh model output: cache hits and templates have nothing new to critique.
+        if state.get("served_tier") in ("primary", "fallback") and not state.get("cache_hit"):
+            return "evaluator"
+        return "cache_store"
     if attempts < 2:
         return "codegen"
     return "escalate_check"

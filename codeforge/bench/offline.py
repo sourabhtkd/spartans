@@ -50,6 +50,16 @@ class _SimStructured:
         return {"parsed": parsed, "raw": None, "parsing_error": None}
 
     def _answer(self, user: str) -> Any:
+        from codeforge.agents.evaluator import EvaluationCritique
+        from codeforge.state import HistorySummary
+
+        if self.schema is EvaluationCritique:
+            return EvaluationCritique(
+                clarity_score=0.0,
+                advisory_notes=["Simulated provider: no real code review was performed."],
+            )
+        if self.schema is HistorySummary:
+            return HistorySummary(summary=user[:200])
         if self.schema is RouteDecision:
             return RouteDecision(kind="python_function", language="python", confidence=0.9)
         if self.schema is Requirements:

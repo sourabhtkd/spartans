@@ -1,0 +1,82 @@
+[
+  {
+    "prompt": "Write an is_palindrome function",
+    "reference": "palindrome.py"
+  },
+  {
+    "prompt": "Calculate the factorial of a number",
+    "reference": "factorial.py"
+  },
+  {
+    "prompt": "Generate the nth fibonacci number",
+    "reference": "fibonacci.py"
+  },
+  {
+    "prompt": "Implement fizzbuzz for numbers 1 to n",
+    "reference": "fizzbuzz.py"
+  },
+  {
+    "prompt": "Calculate the sum of a list of numbers",
+    "reference": "list_sum.py"
+  },
+  {
+    "prompt": "Reverse a given string",
+    "reference": "reverse_string.py"
+  },
+  {
+    "prompt": "Check if an integer is a prime number",
+    "reference": "is_prime.py"
+  },
+  {
+    "prompt": "Find the maximum value in a sequence",
+    "reference": "max_of_list.py"
+  },
+  {
+    "prompt": "Write a function to check if a string is a palindrome",
+    "reference": "palindrome.py"
+  },
+  {
+    "prompt": "Compute the factorial of a number",
+    "reference": "factorial.py"
+  },
+  {
+    "prompt": "Generate the nth fibonacci number",
+    "reference": "fibonacci.py"
+  },
+  {
+    "prompt": "Reverse a given string",
+    "reference": "reverse_string.py"
+  },
+  {
+    "prompt": "Check whether an integer is a prime number",
+    "reference": "is_prime.py"
+  },
+  {
+    "prompt": "Find the largest value in a sequence",
+    "reference": "max_of_list.py"
+  },
+  {
+    "prompt": "Write an is_palindrome function",
+    "reference": "palindrome.py"
+  },
+  {
+    "prompt": "Calculate the sum of a list of numbers",
+    "reference": "list_sum.py"
+  },
+  {
+    "prompt": "Implement fizzbuzz for numbers 1 to n",
+    "reference": "fizzbuzz.py"
+  },
+  {
+    "prompt": "Calculate the factorial of a number",
+    "reference": "factorial.py"
+  },
+  {
+    "prompt": "Find the maximum value in a sequence",
+    "reference": "max_of_list.py"
+  },
+  {
+    "prompt": "Check if an integer is a prime number",
+    "reference": "is_prime.py"
+  }
+]
