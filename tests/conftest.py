@@ -35,3 +35,11 @@ def as_profile(monkeypatch):
         reset_runtime_state()
 
     return switch
+
+
+@pytest.fixture
+def sandbox_calls(monkeypatch):
+    """List that gets one entry every time the pipeline runs code in the sandbox."""
+    from tests.helpers import sandbox_spy
+
+    return sandbox_spy(monkeypatch)

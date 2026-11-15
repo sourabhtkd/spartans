@@ -15,7 +15,7 @@ from codeforge.pipeline import build_graph
 from codeforge.state import GeneratedCode, GeneratedTests, Requirements, RouteDecision
 from tests.fakes import FakeLLM
 
-EVALS_DIR = Path(__file__).resolve().parent
+EVALS_DIR = Path(__file__).resolve().parent.parent / "evals"
 CASSETTE_DIR = EVALS_DIR / "cassettes"
 REFERENCE_DIR = EVALS_DIR / "reference_tests"
 AGENT_MODULES = ("router", "requirements", "codegen", "testgen")
@@ -26,8 +26,9 @@ GOOD_TESTS = (
 )
 
 
-def memory_graph() -> Any:
-    return build_graph(checkpointer=SqliteSaver(sqlite3.connect(":memory:", check_same_thread=False)))
+def memory_graph(path: str = ":memory:") -> Any:
+    """A compiled graph with its own checkpoint store (in memory unless a file path is given)."""
+    return build_graph(checkpointer=SqliteSaver(sqlite3.connect(path, check_same_thread=False)))
 
 
 def patch_llm(monkeypatch: pytest.MonkeyPatch, fn: Callable[..., Any]) -> None:

@@ -117,9 +117,10 @@ codeforge/
 evals/
 ├── golden_set.json     # 85 cases: hard (must be 100%) and soft (>= 85%)
 ├── test_golden.py      # gate runner + summary naming failing cases
-├── harness.py          # fakes, sandbox spy, cassette record/replay
+├── checks/             # what each golden `kind` verifies (privacy, safety, hitl, resilience, quality)
 ├── reference_tests/    # HIDDEN reference tests used to grade generated code
 └── cost_script.json    # fixed 20-request script for the cost benchmark
+tests/helpers.py        # shared test helpers: scripted fake model, outage, sandbox spy, cassettes
 redteam/corpus.yaml     # 47 adversarial inputs (+ promptfooconfig.yaml for live probing)
 scripts/                # demo.py, chaos_run.py, cost_benchmark.py, gate_demo.py, feedback_to_golden.py
 reports/                # generated: chaos_log.md, cost_table.md

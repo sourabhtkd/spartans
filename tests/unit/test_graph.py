@@ -8,45 +8,23 @@ from codeforge.pipeline import build_graph
 from codeforge.state import (
     GeneratedCode,
     GeneratedTests,
-    Requirements,
-    RouteDecision,
 )
 from tests.fakes import FakeLLM
+from tests.helpers import patch_llm, scripted_fake
+
+PALINDROME_TESTS = (
+    "from solution import is_palindrome\n\n"
+    "def test_cases():\n"
+    "    assert is_palindrome('radar') is True\n"
+    "    assert is_palindrome('noon') is True\n"
+    "    assert is_palindrome('world') is False\n"
+)
 
 
 @pytest.fixture
 def fake_llm(monkeypatch: pytest.MonkeyPatch) -> FakeLLM:
-    fake = FakeLLM()
-    fake.set_response(
-        "router",
-        RouteDecision(kind="python_function", language="python", confidence=0.99),
-    )
-    fake.set_response(
-        "requirements",
-        Requirements(function_name="is_palindrome", returns="bool"),
-    )
-    fake.set_response(
-        "codegen",
-        GeneratedCode(
-            code="def is_palindrome(s: str) -> bool:\n    return s == s[::-1]\n"
-        ),
-    )
-    fake.set_response(
-        "testgen",
-        GeneratedTests(
-            tests=(
-                "from solution import is_palindrome\n\n"
-                "def test_cases():\n"
-                "    assert is_palindrome('radar') is True\n"
-                "    assert is_palindrome('noon') is True\n"
-                "    assert is_palindrome('world') is False\n"
-            )
-        ),
-    )
-    monkeypatch.setattr("codeforge.agents.router.resilient_invoke", fake)
-    monkeypatch.setattr("codeforge.agents.requirements.resilient_invoke", fake)
-    monkeypatch.setattr("codeforge.agents.codegen.resilient_invoke", fake)
-    monkeypatch.setattr("codeforge.agents.testgen.resilient_invoke", fake)
+    fake = scripted_fake("def is_palindrome(s: str) -> bool:\n    return s == s[::-1]\n", PALINDROME_TESTS, "is_palindrome")
+    patch_llm(monkeypatch, fake)
     return fake
 
 

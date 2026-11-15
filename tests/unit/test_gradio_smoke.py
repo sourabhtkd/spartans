@@ -1,14 +1,10 @@
-from codeforge.llm import AllModelsDown
 from codeforge.ui import handlers
 from codeforge.ui.layout import build_app
+from tests.helpers import outage
 
 
 def test_app_builds_and_handlers_work_offline(monkeypatch):
-    def down(agent, messages, schema):
-        raise AllModelsDown("down")
-
-    for a in ("router", "requirements", "codegen", "testgen"):
-        monkeypatch.setattr(f"codeforge.agents.{a}.resilient_invoke", down)
+    outage(monkeypatch)
 
     assert build_app() is not None
 

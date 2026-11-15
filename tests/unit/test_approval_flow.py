@@ -1,37 +1,23 @@
-import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from langgraph.checkpoint.sqlite import SqliteSaver
 
 from codeforge.config import Identity
 from codeforge.entrypoint import submit
 from codeforge.hitl.approval import expire_stale, human_approval_node, resume_approval
-from codeforge.pipeline import build_graph
-from codeforge.state import GeneratedCode, GeneratedTests, Requirements, RouteDecision
 from codeforge.store.db import Approval, init_db
-from tests.fakes import FakeLLM
+from tests.helpers import memory_graph, patch_llm, scripted_fake
 
 RISKY = "import tempfile\n\ndef w():\n    with open('x.txt', 'w') as f:\n        f.write('hi')\n    return 1\n"
 TESTS = "from solution import w\n\ndef test_w():\n    assert w() == 1\n    assert w() == 1\n    assert w() == 1\n"
 
 
 @pytest.fixture
-def graph(monkeypatch):
-    fake = FakeLLM()
-    fake.set_response("router", RouteDecision(kind="python_function"))
-    fake.set_response("requirements", Requirements(function_name="w"))
-    fake.set_response("codegen", GeneratedCode(code=RISKY))
-    fake.set_response("testgen", GeneratedTests(tests=TESTS))
-    for a in ("router", "requirements", "codegen", "testgen"):
-        monkeypatch.setattr(f"codeforge.agents.{a}.resilient_invoke", fake)
-    calls = []
-    import codeforge.pipeline.nodes as g
-    real = g.run_pytest_sandboxed
-    monkeypatch.setattr(g, "run_pytest_sandboxed", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
-    gr = build_graph(checkpointer=SqliteSaver(sqlite3.connect(":memory:", check_same_thread=False)))
-    gr.calls = calls
-    return gr
+def graph(monkeypatch, sandbox_calls):
+    patch_llm(monkeypatch, scripted_fake(RISKY, TESTS, fn_name="w"))
+    pipeline = memory_graph()
+    pipeline.calls = sandbox_calls  # the tests below assert on pipeline.calls
+    return pipeline
 
 
 def test_student_cannot_resume_and_nothing_runs(graph):

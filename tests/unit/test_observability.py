@@ -26,28 +26,12 @@ def test_full_graph_logs_are_structured_bound_and_pii_free(capsys, monkeypatch):
     import json
 
     from codeforge.entrypoint import submit
-    from codeforge.pipeline import build_graph
-    from codeforge.state import (
-        GeneratedCode,
-        GeneratedTests,
-        Requirements,
-        RouteDecision,
-    )
-    from tests.fakes import FakeLLM
+    from tests.helpers import memory_graph, patch_llm, scripted_fake
 
-    fake = FakeLLM()
-    fake.set_response("router", RouteDecision(kind="python_function"))
-    fake.set_response("requirements", Requirements(function_name="f"))
-    fake.set_response("codegen", GeneratedCode(code="def f(x):\n    return x + 1\n"))
-    fake.set_response(
-        "testgen",
-        GeneratedTests(tests="from solution import f\n\ndef test_a():\n    assert f(1) == 2\n    assert f(2) == 3\n    assert f(3) == 4\n"),
-    )
-    for a in ("router", "requirements", "codegen", "testgen"):
-        monkeypatch.setattr(f"codeforge.agents.{a}.resilient_invoke", fake)
+    patch_llm(monkeypatch, scripted_fake("def f(x):\n    return x + 1\n"))
 
     secret = "sk-abcdefghijklmnop1234"
-    submit(f"Write f. my key {secret}", thread_id="obs1", graph=build_graph())
+    submit(f"Write f. my key {secret}", thread_id="obs1", graph=memory_graph())
     err = capsys.readouterr().err
     events = [json.loads(line) for line in err.splitlines() if line.startswith("{")]
     assert secret not in err and "sk-" not in err
