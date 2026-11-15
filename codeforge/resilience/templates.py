@@ -15,8 +15,9 @@ _TEMPLATES: list[Template] = [
         patterns=[r"palindrom"],
         code=(
             "def is_palindrome(s: str) -> bool:\n"
-            "    \"\"\"Checks if a string is a palindrome (case and punctuation preserved).\"\"\"\n"
-            "    return s == s[::-1]\n"
+            "    \"\"\"Checks if a string is a palindrome, ignoring case, spaces and punctuation.\"\"\"\n"
+            "    cleaned = [c.lower() for c in s if c.isalnum()]\n"
+            "    return cleaned == cleaned[::-1]\n"
         ),
         tests=(
             "from solution import is_palindrome\n\n"
@@ -25,6 +26,8 @@ _TEMPLATES: list[Template] = [
             "    assert is_palindrome('hello') is False\n"
             "    assert is_palindrome('') is True\n"
             "    assert is_palindrome('a') is True\n"
+            "    assert is_palindrome('Racecar') is True\n"
+            "    assert is_palindrome('A man, a plan, a canal: Panama') is True\n"
         ),
     ),
     Template(

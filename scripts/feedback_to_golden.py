@@ -1,51 +1,60 @@
+"""Flywheel: turn a recorded thumbs-down into a new golden case.
+
+The case needs a HIDDEN reference test that captures what the user expected. Write it first
+(evals/reference_tests/<name>.py), then promote the feedback:
+
+  uv run python scripts/feedback_to_golden.py <feedback_id|run_id> --reference palindrome_case_insensitive.py
+
+The new case is appended to evals/golden_set.json (it should FAIL until the bug is fixed).
+"""
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from codeforge.store.db import Feedback, Run, init_db
 
+ROOT = Path(__file__).resolve().parent.parent
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Flywheel: Convert feedback to new Golden Set case")
-    parser.add_argument("feedback_id", help="ID or run_id of the feedback to promote")
-    parser.add_argument("--tier", default="soft", choices=["hard", "soft"], help="Tier: hard or soft")
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Convert feedback into a new golden-set case")
+    parser.add_argument("feedback_id", help="feedback id or run_id to promote")
+    parser.add_argument("--reference", required=True, help="hidden reference test file in evals/reference_tests/")
+    parser.add_argument("--tier", default="soft", choices=["hard", "soft"])
     args = parser.parse_args()
 
-    session_factory = init_db()
-    with session_factory() as session:
-        # Check feedback by id or run_id
+    ref_path = ROOT / "evals" / "reference_tests" / args.reference
+    if not ref_path.exists():
+        print(f"Reference test not found: {ref_path}\nWrite it first; it encodes what the user expected.")
+        return 2
+
+    request_text, origin = args.feedback_id, "manual"
+    with init_db()() as session:
         fb = None
         if args.feedback_id.isdigit():
             fb = session.query(Feedback).filter(Feedback.id == int(args.feedback_id)).first()
-        if not fb:
+        if fb is None:
             fb = session.query(Feedback).filter(Feedback.run_id == args.feedback_id).first()
-
-        req_text = "Prompt from feedback"
-        if fb:
+        if fb is not None:
             run = session.query(Run).filter(Run.run_id == fb.run_id).first()
-            if run:
-                req_text = run.request_masked
-            print(f"Promoting feedback (Run: {fb.run_id}, Thumb: {fb.thumb}, Comment: {fb.comment}) to golden set...")
-        else:
-            print(f"Creating golden case from identifier '{args.feedback_id}'...")
-            req_text = args.feedback_id
+            if run is not None:
+                request_text = run.request_masked
+            origin = f"feedback {fb.id} ({fb.thumb}): {fb.comment}"
 
-    golden_file = Path("evals/golden_set.json")
-    cases = json.loads(golden_file.read_text(encoding="utf-8"))
-
+    golden = ROOT / "evals" / "golden_set.json"
+    cases = json.loads(golden.read_text(encoding="utf-8"))
     new_id = f"gold_flywheel_{len(cases) + 1:02d}"
-    new_case = {
-        "id": new_id,
-        "tier": args.tier,
-        "kind": "correctness",
-        "input": req_text,
-        "profile": "student_a",
-        "expect": "palindrome.py",
-    }
-    cases.append(new_case)
-    golden_file.write_text(json.dumps(cases, indent=2), encoding="utf-8")
-    print(f"✅ Appended new case '{new_id}' to evals/golden_set.json (Total cases: {len(cases)})")
+    cases.append(
+        {
+            "id": new_id, "tier": args.tier, "kind": "correctness_template", "input": request_text,
+            "profile": "student_a", "expect": args.reference, "origin": origin,
+        }
+    )
+    golden.write_text(json.dumps(cases, indent=2), encoding="utf-8")
+    print(f"Appended '{new_id}' to evals/golden_set.json ({len(cases)} cases). Run `make gate` and watch it fail.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

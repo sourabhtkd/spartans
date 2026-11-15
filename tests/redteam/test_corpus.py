@@ -17,7 +17,7 @@ def test_adversarial_corpus_case(case: dict):
     inp = case["input"]
     expected = case["expected_verdict"]
 
-    if category in ("destructive", "obfuscation", "dunder_escape", "approval_required", "allowed_safe"):
+    if category in ("destructive", "obfuscation", "dunder_escape", "approval_required", "allowed_safe", "bypass"):
         decision = evaluate_code_policy(inp)
         assert (
             decision.verdict == expected
@@ -32,3 +32,6 @@ def test_adversarial_corpus_case(case: dict):
         assert any(
             tag in masked for tag in ["[SECRET]", "[EMAIL]", "[CARD]", "[AADHAAR]", "[PHONE]"]
         )
+
+    else:
+        pytest.fail(f"unknown corpus category '{category}': case would pass vacuously")
