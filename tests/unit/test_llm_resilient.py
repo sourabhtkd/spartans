@@ -117,7 +117,7 @@ def test_retries_transient_then_succeeds_and_meters(monkeypatch, no_sleep):
 def test_permanent_error_fails_fast_to_fallback(monkeypatch, no_sleep):
     ok = RouteDecision(kind="other")
     fakes = _install(monkeypatch, {"small": [AuthenticationError("401")], "fallback": [ok]})
-    res, tier = llm.resilient_invoke("router", ["m"], RouteDecision)
+    _res, tier = llm.resilient_invoke("router", ["m"], RouteDecision)
     assert tier == "fallback"
     assert fakes["small"].structured.calls == 1  # no retries on auth errors
 
