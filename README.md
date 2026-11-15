@@ -27,16 +27,20 @@ graph TD;
 	refuse(refuse)
 	human_approval(human_approval)
 	sandbox_run(sandbox_run)
+	evaluator(evaluator)
 	cache_store(cache_store)
 	escalate_check(escalate_check)
 	report(report)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> ingress_guard;
-	cache_lookup -.-> policy_gate;
 	cache_lookup -.-> router;
+	cache_lookup -.-> test_validator;
 	cache_store --> escalate_check;
-	codegen --> testgen;
+	codegen -.-> escalate_check;
+	codegen -.-> policy_gate;
+	codegen -.-> testgen;
 	escalate_check --> report;
+	evaluator --> cache_store;
 	human_approval -.-> escalate_check;
 	human_approval -.-> sandbox_run;
 	ingress_guard -.-> cache_lookup;
@@ -51,8 +55,12 @@ graph TD;
 	sandbox_run -.-> cache_store;
 	sandbox_run -.-> codegen;
 	sandbox_run -.-> escalate_check;
-	test_validator --> policy_gate;
-	testgen --> test_validator;
+	sandbox_run -.-> evaluator;
+	test_validator -.-> escalate_check;
+	test_validator -.-> policy_gate;
+	test_validator -.-> testgen;
+	testgen -.-> escalate_check;
+	testgen -.-> test_validator;
 	report --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
@@ -68,7 +76,7 @@ graph TD;
 | **1. Pipeline & Orchestration** | Pipeline Owner | LangGraph state graph machine, Multi-agent reasoning chain (`Router`, `Requirements`, `CodeGen`, `TestGen`, `TestValidator`), AST syntax validation, repair loop on test failure. |
 | **2. Safety & Security (R1, R2)** | Safety Owner | Strict identity isolation from configuration, PII scrubber (Credit Cards with Luhn, Aadhaar with Verhoeff, Phone numbers, API keys), pure AST policy gate, and isolated tempdir sandbox with `rlimits` and blocked network. |
 | **3. Reliability & Cost (R4, R5)** | Reliability & Cost Owner | Exponential retry loops with full jitter, circuit breakers, 60% chaos injection testing, offline template degraded tier, semantic cache with token guard verification, and message compaction. |
-| **4. Quality, HITL & Evals (R6)** | Quality & Evals Owner | 35-case golden evaluation test suite with hard/soft thresholds, CI integration, human-in-the-loop approval interrupts, P1/P2/P3 support escalation, Gradio 5-tab UI, and 42-case adversarial red team suite. |
+| **4. Quality, HITL & Evals (R6)** | Quality & Evals Owner | 85-case golden evaluation suite (54 hard / 31 soft) with hard/soft thresholds, CI integration, human-in-the-loop approval interrupts, P1/P2/P3 support escalation, Gradio 5-tab UI, and 47-case adversarial red team suite. |
 
 ---
 
@@ -92,30 +100,29 @@ graph TD;
 
 ```text
 codeforge/
-├── agents/             # Agent definitions (Router, Requirements, CodeGen, TestGen, TestValidator, Evaluator)
-├── hitl/               # Human-in-the-loop approvals & support ticket escalation
-├── guard/              # Ingress PII scrubbers (Luhn, Verhoeff, API key patterns)
-├── policy/             # Pure AST code policy evaluation (DENY, NEEDS_APPROVAL, ALLOW)
-├── sandbox/            # Isolated subprocess test runner with rlimits & blocked network
-├── store/              # SQLite persistence, role-isolated RunStore, quotas, idempotency
-├── resilience/         # Jitter retries, circuit breakers, chaos injection, offline templates
-├── cost/               # Semantic cache with token guards, metering, and compaction
-├── prompts/            # Clean agent system prompts
-├── app_gradio.py       # 5-tab Gradio interactive dashboard
-├── cli.py              # Command-line interface
-├── graph.py            # LangGraph state machine builder
-└── config.py           # Identity, profile, and quota configuration
+├── entrypoint.py       # submit(): masks PII BEFORE the graph/checkpointer; the only way user text enters
+├── graph.py            # LangGraph state machine (traced nodes, fail-closed routing)
+├── agents/             # Router, Requirements, CodeGen, TestGen, TestValidator (gates), Evaluator (advisory)
+├── guard/              # PII masking (Luhn cards, Verhoeff Aadhaar, keys, emails, phones)
+├── policy/             # evaluate_code_policy(): pure AST function -> allow | needs_approval | deny
+├── sandbox/            # subprocess + tempdir + rlimits + scrubbed env + network blocked (+ netns / docker)
+├── store/              # SQLAlchemy 2.0 models, identity-scoped RunStore, quotas, atomic idempotency claim
+├── hitl/               # approval (interrupt/resume, server-side approver, expiry) + handoff tickets
+├── resilience/         # retry classifier + jitter, circuit breaker, chaos switch, template library
+├── cost/               # metering callback, guarded semantic cache, history compaction
+├── bench/              # chaos + cost benchmarks, simulated provider (clearly labelled)
+├── llm.py              # the single resilient call path (metering + Langfuse + retries + breaker + fallback)
+├── app_gradio.py       # Gradio UI (chat, my runs, reviewer queue, tickets, ops)
+└── config.py           # identity/role/quotas from config.yaml; never from message text
 evals/
-├── golden_set.json     # 35 golden evaluation cases (hard & soft tiers)
-├── reference_tests/    # Hidden reference test suites for golden evaluation
-└── test_golden.py      # Golden test gate assertion engine
-redteam/
-└── corpus.yaml         # 42 adversarial test cases (injection, jailbreaks, malicious code)
-scripts/
-├── demo.py             # Replays the 4 core incidents in terminal
-├── chaos_run.py        # 20-request chaos benchmark suite
-├── cost_benchmark.py   # Baseline vs optimized semantic cache benchmark
-└── feedback_to_golden.py # Flywheel script appending user feedback to golden evals
+├── golden_set.json     # 85 cases: hard (must be 100%) and soft (>= 85%)
+├── test_golden.py      # gate runner + summary naming failing cases
+├── harness.py          # fakes, sandbox spy, cassette record/replay
+├── reference_tests/    # HIDDEN reference tests used to grade generated code
+└── cost_script.json    # fixed 20-request script for the cost benchmark
+redteam/corpus.yaml     # 47 adversarial inputs (+ promptfooconfig.yaml for live probing)
+scripts/                # demo.py, chaos_run.py, cost_benchmark.py, gate_demo.py, feedback_to_golden.py
+reports/                # generated: chaos_log.md, cost_table.md
 ```
 
 ---
@@ -152,7 +159,7 @@ cp .env.example .env
 uv run python -m codeforge.cli "Write a function to check if a string is a palindrome"
 
 # Run as specific user profile (e.g. instructor or student)
-CODEFORGE_PROFILE=instructor_a uv run python -m codeforge.cli "Write an is_prime checker"
+CODEFORGE_PROFILE=instructor uv run python -m codeforge.cli "Write an is_prime checker"
 ```
 
 ### Gradio Interactive Web UI (5 Tabs)
@@ -170,37 +177,59 @@ Access the application at `http://localhost:7860`:
 
 ## Testing & CI Evaluation Gates
 
-### Run All Unit Tests
 ```bash
-uv run pytest tests/unit -v
+make lint typecheck   # ruff + mypy
+make test             # unit tests (isolated per-test sqlite; never touches real keys)
+make gate             # golden gate: HARD must be 100%, SOFT >= 85% of the cases that ran
+make gate-demo        # live demo: weaken a rule -> gate RED naming the case -> restore -> GREEN
 ```
 
-### Run Golden Evaluation Gate
-```bash
-# Run full evaluation suite (hard pass requirement: 100%, soft pass: ≥85%)
-make gate
-```
+CI (`.github/workflows/ci.yml`) runs gitleaks, ruff, mypy, unit tests and the golden gate on every push/PR.
 
-### Live Gate Demo (Red → Green)
-Demonstrate how the evaluation gate protects against safety regressions:
-```bash
-# Weakens policy by removing 'os' from deny list -> Trips gate red with failing case name
-make gate-red
+**LLM-backed golden cases** (`mode: "llm"`, 12 cases) replay recorded cassettes from `evals/cassettes/`.
+Without a cassette they are **skipped and reported as skipped, never counted as passed**.
+Record them against a real provider with `GROQ_API_KEY=... make record`.
 
-# Restores policy and confirms all hard and soft gates pass 100%
-make gate-green
-```
+### Flywheel: thumbs-down -> golden case -> fix
+1. A user clicks 👎 in the Gradio chat (stored in the `feedback` table).
+2. Write a hidden reference test capturing what they expected: `evals/reference_tests/<name>.py`.
+3. `uv run python scripts/feedback_to_golden.py <feedback_id> --reference <name>.py` appends a new golden case.
+4. `make gate` fails on the new case; fix the code/template/prompt; the gate goes green.
+(Worked example in the repo: `gold_flywheel_36`, palindromes with capital letters / punctuation.)
 
-### Run Adversarial Red Team Suite
+### Benchmarks (R4 cost, R5 chaos)
 ```bash
-uv run pytest tests/redteam/test_corpus.py -v
+uv run python scripts/chaos_run.py --offline         # -> reports/chaos_log.md
+uv run python scripts/cost_benchmark.py --offline    # -> reports/cost_table.md
+GROQ_API_KEY=... uv run python scripts/chaos_run.py  # live provider (real numbers)
 ```
+`--offline` uses a **simulated provider** and every report is labelled `SIMULATED`: the chaos injection,
+retries, breakers, fallback, metering and cache are the real code paths, but token counts are estimated
+and model quality is not measured. Re-run with a key for real usage numbers. The pass/NOT MET verdicts are
+computed from the run, never hardcoded.
+
+---
+
+## Security Properties (each is covered by a hard golden case or unit test)
+- **Mask before the graph**: raw text never reaches the LangGraph checkpointer, logs, tickets, Langfuse or prompts.
+- **Identity from config only**: graph input never carries identity; "I'm an instructor" changes nothing.
+- **Approver identity is server-side**: `resume_approval` reads the approver from config, refuses students and self-approval; pending approvals expire (fail closed); every request has its own audit row.
+- **Fail closed**: missing policy decision -> refuse; empty/refused code never reaches the sandbox; invalid generated tests never run.
+- **Frozen tests during repair**: the repair loop only changes code, so a repair cannot "pass" by weakening the tests.
+- **Atomic idempotency**: a UNIQUE-keyed claim makes concurrent identical submissions execute once.
+- **Policy gate**: pure AST; denies obfuscated builtins access, dynamic `getattr`, relative imports, dangerous attribute calls and private/OS modules.
+
+## Known Limitations (honest notes)
+- R3 is partial (explicit-human / repeated-denial / failed-repair escalation with P1 tickets; no sentiment triage). R7 (SQL agent) is not built.
+- On macOS the sandbox cannot apply an address-space rlimit or a network namespace; it still enforces timeout, CPU/file/fd limits, scrubbed env and a Python-level socket block. On Linux `unshare -rn` and `RLIMIT_NPROC` are used when available; `SANDBOX_BACKEND=docker` (see `Dockerfile.sandbox`) gives full isolation.
+- The Gradio profile dropdown is a **demo-only**, process-global identity switch; the server binds to `127.0.0.1` by default (`CODEFORGE_HOST` to override). Do not expose it publicly.
+- Schema is created with `create_all` (no migrations); delete the local sqlite files after model changes.
 
 ---
 
 ## Live Demo Narrative
 To present or replay the four core incidents:
 ```bash
-uv run python scripts/demo.py
+uv run python scripts/demo.py   # 5 incidents (model scripted for 1-3 so it runs offline)
 ```
-See [`demo/demo_script.md`](file:///Users/sourabhkumargupta/Projects/gen%20AI%20live/codeforge/demo/demo_script.md) for the complete presenter narration.
+See [`demo/demo_script.md`](demo/demo_script.md) for the complete presenter narration.

@@ -1,16 +1,16 @@
 """CodeForge End-to-End Interactive Demonstration Script.
 
-Replays the 4 core incidents and the live CI/CD gate demo:
+Replays the core incidents (the model is scripted for incidents 1-3 so the demo runs offline):
 - Incident 1: Student A (Happy path - verified palindrome generation)
 - Incident 2: Student B (Adversarial attack - pure AST policy gate denies)
 - Incident 3: Student C (PII masking & automated P1 human handoff)
-- Incident 4: 60% Chaos Resilience (Circuit breaker & offline template fallback)
+- Incident 4: 60% chaos + total outage (real retries/breaker/fallback; simulated provider if no key)
+- Incident 5: obfuscated policy-bypass attempt denied
 """
 
-import os
 import time
+from typing import Any
 
-from codeforge.config import clear_settings_cache
 from codeforge.entrypoint import submit
 from codeforge.graph import build_graph
 from codeforge.guard.pii import mask_text
@@ -79,7 +79,7 @@ def setup_demo_llm(malicious: bool = False) -> FakeLLM:
     return fake
 
 
-def patch_agents(fake: FakeLLM) -> None:
+def patch_agents(fake: Any) -> None:
     import codeforge.agents.codegen as codegen_mod
     import codeforge.agents.requirements as req_mod
     import codeforge.agents.router as router_mod
@@ -178,42 +178,35 @@ def incident_3_student_c() -> None:
 
 def incident_4_chaos_resilience() -> None:
     print_banner("INCIDENT 4: Resilience Under Chaos — 60% Failure Rate & Graceful Degradation")
-    print("Simulating upstream LLM provider instability (429 Rate Limits & 503 Outages)...")
-    os.environ["CHAOS_FAILURE_RATE"] = "0.6"
-    clear_settings_cache()
-
-    # Re-wire to live/resilient invocation for chaos test
-    import codeforge.agents.codegen as codegen_mod
-    import codeforge.agents.requirements as req_mod
-    import codeforge.agents.router as router_mod
-    import codeforge.agents.testgen as testgen_mod
+    from codeforge.bench.chaos import TEMPLATE_TASKS, UNKNOWN_TASKS, run_requests
+    from codeforge.config import get_settings
     from codeforge.llm import resilient_invoke
 
-    router_mod.resilient_invoke = resilient_invoke
-    req_mod.resilient_invoke = resilient_invoke
-    codegen_mod.resilient_invoke = resilient_invoke
-    testgen_mod.resilient_invoke = resilient_invoke
+    patch_agents(resilient_invoke)  # undo the scripted fake used by incidents 1-3
+    offline = not get_settings().groq_api_key
+    mode = "SIMULATED provider (no API key)" if offline else "LIVE provider"
+    print(f"Injecting 429/503/timeouts into 60% of model calls [{mode}]. Real retries, breaker and fallback run.\n")
+    rows = run_requests(TEMPLATE_TASKS[:3], rate=0.6, seed=11, offline=offline)
+    for r in rows:
+        print(
+            f"  {r.prompt[:42]:<42} tier={Colors.BOLD}{r.served_tier:<9}{Colors.END} "
+            f"injected_failures={r.injected_failures:<3} tests_passed={r.tests_passed}"
+        )
+    print(f"\n{Colors.YELLOW}Total outage{Colors.END} (every model call fails):")
+    for r in run_requests([TEMPLATE_TASKS[0], UNKNOWN_TASKS[0]], 0.0, 1, offline, outage=True):
+        print(f"  {r.prompt[:46]:<46} tier={Colors.BOLD}{r.served_tier:<9}{Colors.END} ticket={r.ticket or '-'}")
+    print(f"  {Colors.GREEN}✓ Template task still answered; unknown task refused honestly + ticket, never invented code.{Colors.END}")
 
-    graph = build_graph()
-    prompt = "Write an is_palindrome function"
-    thread_id = f"demo_inc4_{int(time.time())}"
 
-    print(f"{Colors.BLUE}[Resilience Layer]{Colors.END} Executing with jitter retries and fallback to verified templates...")
-    state = submit(prompt, thread_id=thread_id, graph=graph).values
+def incident_5_policy_bypass() -> None:
+    print_banner("INCIDENT 5: Obfuscated Bypass Attempt — Still Denied, Nothing Runs")
+    evil = '__builtins__["__imp"+"ort__"]("o"+"s").system("rm -rf ~")'
+    print(f"{Colors.BOLD}Model proposes (obfuscated, never matches a keyword filter):{Colors.END}\n  {evil}")
+    from codeforge.policy.code_policy import evaluate_code_policy
 
-    served_tier = state.get("served_tier", "primary")
-    run_res = state.get("run_result")
-    passed = run_res.exit_code == 0 if run_res else False
-
-    print(f"\n{Colors.GREEN}[Resilience Outcome]{Colors.END}")
-    print(f"  - Served Tier: {Colors.BOLD}{served_tier.upper()}{Colors.END}")
-    print(f"  - Test Suite Exit Code: {run_res.exit_code if run_res else 'N/A'}")
-    print(f"  - User Request Fulfilled: {Colors.BOLD}{Colors.GREEN if passed else Colors.RED}{passed}{Colors.END}")
-    print("  - Reliability Guarantee: Deterministic offline template fulfilled request safely.")
-
-    # Reset chaos
-    os.environ["CHAOS_FAILURE_RATE"] = "0.0"
-    clear_settings_cache()
+    decision = evaluate_code_policy(evil)
+    print(f"{Colors.RED}[Policy Gate]{Colors.END} verdict={decision.verdict.upper()} reasons={decision.reasons[:3]}")
+    print(f"{Colors.YELLOW}[Sandbox]{Colors.END} never invoked: the AST is rejected before any process starts.")
 
 
 def main() -> None:
@@ -228,16 +221,17 @@ def main() -> None:
     incident_2_student_b()
     incident_3_student_c()
     incident_4_chaos_resilience()
+    incident_5_policy_bypass()
 
     print_banner("SUMMARY & EVALUATION GATE DEMO")
-    print("All 4 incidents executed successfully demonstrating:")
+    print("All 5 incidents executed, demonstrating:")
     print("  1. Strict Verification (Honest report strictly from exit code 0)")
     print("  2. Static Security (Pure AST policy inspection never executes hostile code)")
     print("  3. Data Privacy (PII masking with Luhn & Verhoeff + automated P1 escalation)")
     print("  4. High Resilience (Adaptive retries, circuit breakers, offline templates)")
+    print("  5. Obfuscated attacks denied by the AST gate, nothing executed")
     print("\nTo inspect the golden CI evaluation gate, run:")
-    print(f"  {Colors.BOLD}make gate-red{Colors.END}   (Simulates policy regression and catches it)")
-    print(f"  {Colors.BOLD}make gate-green{Colors.END} (Restores policy and verifies 100% pass rate)\n")
+    print(f"  {Colors.BOLD}make gate-demo{Colors.END}  (weakens a policy rule -> gate RED naming the case -> restore -> GREEN)\n")
 
 
 if __name__ == "__main__":
