@@ -355,3 +355,6 @@ These amendments **override** the earlier task text where they conflict. Executi
 | 13 Resilience | Breaker params from config with failure window; class/status-based transient classifier; template synonyms; chaos log summary computed, requires live key. | F10, F17 |
 | 14 Cost | Benchmark = fixed 20 requests, baseline vs optimized, numbers read from `metrics`; computed verdict. Cache key = sha256(text+role+policy_version), role-scoped lookups, extra guard words, stable fallback hash; compaction wired. | F9, F12, F13 |
 | 17 Docs | Regenerate mermaid, add bypass incident to demo, document new design decisions. | F20 |
+
+## Implementation status
+All revisions above are implemented (see `fix_plan.md` F1-F20 and its "Implementation status" table for deviations: live benchmark numbers need a real API key, LLM-backed golden cases need recorded cassettes).
