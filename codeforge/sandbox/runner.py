@@ -36,7 +36,7 @@ def _unshare_available() -> bool:
         if sys.platform.startswith("linux") and shutil.which("unshare"):
             try:
                 _UNSHARE_OK = (
-                    subprocess.run(["unshare", "-rn", "true"], capture_output=True, timeout=5).returncode == 0
+                    subprocess.run(["unshare", "-rn", "true"], check=False, capture_output=True, timeout=5).returncode == 0
                 )
             except (OSError, subprocess.SubprocessError):
                 _UNSHARE_OK = False
