@@ -180,15 +180,15 @@ Access the application at `http://localhost:8501`:
 
 ## Run with Docker
 
-Brings up the Streamlit UI, Redis (semantic cache), and a self-hosted Langfuse v3 stack (web, worker, Postgres, ClickHouse, MinIO). SQLite lives in the `codeforge-data` volume.
+Brings up the Streamlit UI and Redis (semantic cache); traces go to Langfuse Cloud. SQLite lives in the `codeforge-data` volume.
 
 ```bash
-cp .env.docker.example .env.docker   # set GROQ_API_KEY and replace every CHANGE_ME
+cp .env.docker.example .env.docker   # set GROQ_API_KEY, Langfuse Cloud keys, and replace every CHANGE_ME
 make up                              # = docker compose --env-file .env.docker up -d
 ```
 
 - UI: http://localhost:8501 (bound to loopback only: identity switching is a demo feature)
-- Langfuse: http://localhost:3000 (login with `LANGFUSE_INIT_USER_*` from `.env.docker`)
+- Langfuse: https://cloud.langfuse.com. Create a project, then paste its API keys into `.env.docker` (set `LANGFUSE_BASE_URL` to your region: `https://cloud.langfuse.com` EU or `https://us.cloud.langfuse.com` US)
 - CLI: `docker compose --env-file .env.docker run --rm app python -m codeforge.cli "reverse a string"`
 - Stop: `make down` (add `-v` to the compose command to also delete volumes)
 

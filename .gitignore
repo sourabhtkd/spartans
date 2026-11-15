@@ -18,3 +18,4 @@ graphify-out/
 feedback.jsonl
 .gate_backup/
 .env.docker
+.env.docker.example

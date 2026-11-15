@@ -39,4 +39,4 @@ down:
 	$(DC) down
 
 logs:
-	$(DC) logs -f app langfuse-web
+	$(DC) logs -f app
