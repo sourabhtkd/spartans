@@ -91,3 +91,23 @@ def test_approval_node_blocks_self_approval(monkeypatch):
     decision = result["approval"]
     assert decision.approved is False
     assert "self-approval is forbidden" in decision.comment
+
+
+def test_human_request_regex_is_not_too_broad():
+    assert not should_escalate("Write a Python agent class")[0]
+    assert not should_escalate("Write a person class with name and age")[0]
+    assert not should_escalate("simulate a human readable size formatter")[0]
+    assert should_escalate("THIS IS NOT WORKING!!! get me a human.")[0]
+    assert should_escalate("I want to talk to a real person")[0]
+    assert should_escalate("human please")[0]
+
+
+def test_repeated_policy_denials_escalate_across_requests():
+    from codeforge.config import Identity
+    from codeforge.store.runs import RunStore
+
+    store = RunStore(identity_provider=lambda: Identity(user_id="u_x", role="student"))
+    assert store.record_policy_denial() == 1
+    assert not should_escalate("calm", policy_denials=1)[0]
+    assert store.record_policy_denial() == 2
+    assert should_escalate("calm", policy_denials=2)[0]

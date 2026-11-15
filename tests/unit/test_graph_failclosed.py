@@ -122,3 +122,36 @@ def test_tests_that_disagree_with_reference_are_regenerated_once(monkeypatch):
     assert stages[0]["is_valid"] is False
     assert "reference" in stages[0]["reason"]
     assert "accepted with warning" in stages[1]["reason"]
+
+
+def test_student_c_gets_p1_ticket_without_secrets(monkeypatch, sandbox_calls):
+    from codeforge.store.db import Ticket, init_db
+
+    res = submit(
+        "THIS IS NOT WORKING!!! get me a human. key sk-abcdefghijklmnop1234 aadhaar 2345 6789 0124",
+        graph=_graph(),
+    )
+    t = res.values["ticket"]
+    assert t.priority == "P1"
+    assert "sk-" not in t.request_masked and "[SECRET]" in t.request_masked
+    assert "escalated to a human" in res.values["report"]
+    assert sandbox_calls == []
+    with init_db()() as s:
+        rows = s.query(Ticket).all()
+    assert all("sk-" not in r.request_masked for r in rows)
+
+
+def test_second_policy_denial_opens_ticket(monkeypatch):
+    fake = FakeLLM()
+    fake.set_response("router", RouteDecision(kind="python_function"))
+    fake.set_response("requirements", Requirements(function_name="f"))
+    fake.set_response("codegen", GeneratedCode(code="import os\n\ndef f():\n    os.remove('x')\n"))
+    fake.set_response("testgen", GeneratedTests(tests=GOOD_TESTS))
+    _patch(monkeypatch, fake)
+    g = _graph()
+    first = submit("delete my files", thread_id="d1", graph=g)
+    assert first.values.get("ticket") is None
+    assert "Refused by policy" in first.values["report"]
+    second = submit("delete all my files now", thread_id="d2", graph=g)
+    assert second.values["ticket"] is not None
+    assert "Repeated policy denials" in second.values["ticket"].reason

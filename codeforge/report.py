@@ -16,6 +16,13 @@ def determine_status_message(state: CodeForgeState) -> str:
     if state.get("served_tier") == "refused":
         return "❌ CodeForge cannot generate code right now. Handoff ticket created."
 
+    ticket = state.get("ticket")
+    if ticket and not state.get("code") and ticket.reason.startswith("User requested human"):
+        return (
+            f"🙋 Your request was escalated to a human (ticket {ticket.ticket_id}, "
+            f"{ticket.priority}, SLA {ticket.sla_hours}h). Nothing was executed."
+        )
+
     policy = state.get("policy")
     if policy and policy.verdict == "deny":
         reasons_str = "; ".join(policy.reasons) if policy.reasons else "Restricted operation"

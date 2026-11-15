@@ -7,8 +7,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from codeforge.state import CodeForgeState, HandoffTicket
 from codeforge.store.db import Ticket, init_db
 
+# Matches explicit requests for a person ("get me a human", "talk to a real person",
+# "human please"). A bare "agent"/"person" (e.g. "write an agent class") must NOT match.
 HUMAN_REQUEST_REGEX = re.compile(
-    r"\b(human|person|agent|someone real)\b", re.IGNORECASE
+    r"\b(?:get|give|need|want|talk to|speak (?:to|with)|connect me (?:to|with)|escalate to)\s+"
+    r"(?:me\s+)?(?:an?\s+)?(?:real\s+|live\s+)?"
+    r"(?:human(?:\s+(?:agent|being|support))?|person|someone real|support agent|live agent)\b"
+    r"|\bhuman please\b",
+    re.IGNORECASE,
 )
 
 

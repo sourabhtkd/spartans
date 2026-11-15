@@ -190,7 +190,11 @@ def escalate_check_node(state: CodeForgeState) -> dict[str, Any]:
 
     req_text = state.get("raw_request_masked", "")
     policy = state.get("policy")
-    policy_denials = 1 if (policy and policy.verdict == "deny") else 0
+    policy_denials = 0
+    if policy and policy.verdict == "deny":
+        # Session-level counter: repeated denials across requests escalate (R3 rule).
+        identity = current_identity()
+        policy_denials = RunStore(identity_provider=lambda: identity).record_policy_denial()
     attempts = state.get("attempts", 0)
 
     should_esc, reason, prio = should_escalate(
@@ -214,9 +218,10 @@ def report_node(state: CodeForgeState) -> dict[str, Any]:
 def route_after_ingress(state: CodeForgeState) -> Literal["report", "cache_lookup"]:
     if state.get("report") and "Quota Exceeded" in state["report"]:
         return "report"
-    if state.get("ticket"):
-        return "report"
-    return "cache_lookup"
+    ticket = state.get("ticket")
+    if ticket and ticket.priority == "P1":
+        return "report"  # urgent: hand off immediately, short reply
+    return "cache_lookup"  # lower-priority human requests still get the pipeline
 
 
 def route_after_cache(state: CodeForgeState) -> Literal["test_validator", "router"]:

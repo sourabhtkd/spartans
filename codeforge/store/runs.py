@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from codeforge.config import Identity, current_identity, get_settings
 from codeforge.policy.code_policy import POLICY_VERSION
 from codeforge.state import RunResult
-from codeforge.store.db import Run, init_db
+from codeforge.store.db import PolicyDenial, Run, init_db
 
 
 class RunNotFound(Exception):
@@ -84,6 +84,19 @@ class RunStore:
                 raise QuotaExceeded(
                     f"Quota exceeded: {recent_count}/{limit} runs in the past hour for role '{identity.role}'"
                 )
+
+    def record_policy_denial(self) -> int:
+        """Record a policy denial for the current user; returns denials in the last hour."""
+        user_id = self._get_identity().user_id
+        with self.session_factory() as session:
+            session.add(PolicyDenial(user_id=user_id, created_at=datetime.now(UTC)))
+            session.commit()
+            cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1)
+            return int(
+                session.query(PolicyDenial)
+                .filter(PolicyDenial.user_id == user_id, PolicyDenial.created_at >= cutoff)
+                .count()
+            )
 
     def get_by_idem_key(self, idem_key: str) -> RunResult | None:
         """Looks up a *finished* result by idempotency key (running claims return None)."""
