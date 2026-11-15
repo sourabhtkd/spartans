@@ -1,72 +1,46 @@
-import os
+"""R5 chaos run: 20 requests under 60% injected provider failures, then a total outage.
+
+Usage:
+  uv run python scripts/chaos_run.py            # needs GROQ_API_KEY (live provider)
+  uv run python scripts/chaos_run.py --offline  # simulated provider, clearly labelled
+"""
+import argparse
+import sys
 from pathlib import Path
 
-from codeforge.config import clear_settings_cache
-from codeforge.entrypoint import submit
-from codeforge.graph import build_graph
-
-REQUESTS = [
-    "Write an is_palindrome function",
-    "Calculate the factorial of a number",
-    "Generate the nth fibonacci number",
-    "Implement fizzbuzz for numbers 1 to n",
-    "Calculate the sum of a list of numbers",
-    "Reverse a given string",
-    "Check if an integer is a prime number",
-    "Find the maximum value in a sequence",
-    "Write an is_palindrome function",
-    "Calculate the factorial of a number",
-    "Generate the nth fibonacci number",
-    "Implement fizzbuzz sequence",
-    "Calculate sum of numbers in list",
-    "Reverse an input string",
-    "Check if number is prime",
-    "Find the maximum number in list",
-    "Write an is_palindrome function",
-    "Calculate factorial",
-    "Fibonacci sequence generator",
-    "Find max in a list",
-]
+from codeforge.bench.chaos import (
+    TEMPLATE_TASKS,
+    UNKNOWN_TASKS,
+    render_report,
+    run_requests,
+)
+from codeforge.bench.requests import CHAOS_REQUESTS as REQUESTS
+from codeforge.config import get_settings
 
 
-def run_chaos_benchmark() -> None:
-    os.environ["CHAOS_FAILURE_RATE"] = "0.6"
-    clear_settings_cache()
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--offline", action="store_true", help="use the simulated provider (no API key)")
+    ap.add_argument("--rate", type=float, default=0.6)
+    ap.add_argument("--seed", type=int, default=42)
+    args = ap.parse_args()
 
-    graph = build_graph()
-    results = []
+    if not args.offline and not get_settings().groq_api_key:
+        print("Set GROQ_API_KEY for a real chaos run, or pass --offline for a labelled simulated run.")
+        return 2
 
-    print("Running 20 requests under 60% transient chaos injection...")
-    for idx, prompt in enumerate(REQUESTS):
-        thread_id = f"chaos_req_{idx}"
-        state = submit(prompt, thread_id=thread_id, graph=graph).values
-        tier = state.get("served_tier", "primary")
-        passed = state.get("run_result").exit_code == 0 if state.get("run_result") else False
-        results.append({
-            "idx": idx + 1,
-            "prompt": prompt,
-            "served_tier": tier,
-            "passed": passed,
-        })
-        print(f"[{idx+1}/20] {prompt[:30]}... -> Tier: {tier} | Passed: {passed}")
+    mode = "SIMULATED provider (offline)" if args.offline else "LIVE provider"
+    print(f"Chaos run [{mode}]: {len(REQUESTS)} requests at {args.rate:.0%} failure rate...")
+    chaos = run_requests(REQUESTS, args.rate, args.seed, args.offline, fast=args.offline)
+    outage = run_requests(TEMPLATE_TASKS + UNKNOWN_TASKS, 0.0, args.seed, args.offline, outage=True)
 
-    # Generate reports/chaos_log.md
-    reports_dir = Path("reports")
-    reports_dir.mkdir(exist_ok=True)
-    report_file = reports_dir / "chaos_log.md"
-
-    with open(report_file, "w", encoding="utf-8") as f:
-        f.write("# Chaos Engineering Benchmark Report\n\n")
-        f.write("**Environment**: `CHAOS_FAILURE_RATE=0.6` (60% synthetic 429/503/timeout injection)\n\n")
-        f.write("| # | Prompt | Served Tier | Execution Passed |\n")
-        f.write("|---|---|---|---|\n")
-        for r in results:
-            pass_str = "✅ Yes" if r["passed"] else "❌ No"
-            f.write(f"| {r['idx']} | {r['prompt']} | `{r['served_tier']}` | {pass_str} |\n")
-        f.write("\n**Summary**: All 20/20 requests successfully handled via resilient retries & templates tier.\n")
-
-    print(f"Chaos log written to {report_file}")
+    out = Path("reports") / "chaos_log.md"
+    out.parent.mkdir(exist_ok=True)
+    out.write_text(render_report(chaos, outage, {"mode": mode, "rate": args.rate, "seed": args.seed}), encoding="utf-8")
+    answered = sum(r.answered for r in chaos)
+    print(f"{answered}/{len(chaos)} answered under chaos | log: {out}")
+    return 0 if answered == len(chaos) else 1
 
 
 if __name__ == "__main__":
-    run_chaos_benchmark()
+    sys.exit(main())

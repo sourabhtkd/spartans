@@ -134,3 +134,53 @@ def test_outage_template_vs_unknown_task(monkeypatch: pytest.MonkeyPatch):
     assert res_unknown.get("served_tier") == "refused"
     assert "cannot generate code right now" in res_unknown.get("report", "")
     assert res_unknown.get("ticket") is not None
+
+
+CHAOS_PROMPTS = [
+    ("Write an is_palindrome function", "palindrome"),
+    ("Calculate the factorial of a number", "factorial"),
+    ("Generate the nth fibonacci number", "fibonacci"),
+    ("Implement fizzbuzz for numbers 1 to n", "fizzbuzz"),
+    ("Calculate the sum of a list of numbers", "list_sum"),
+    ("Reverse a given string", "reverse_string"),
+    ("Check if an integer is a prime number", "is_prime"),
+    ("Find the maximum value in a sequence", "max_of_list"),
+    ("Implement fizzbuzz sequence", "fizzbuzz"),
+    ("Calculate sum of numbers in list", "list_sum"),
+    ("Reverse an input string", "reverse_string"),
+    ("Check if number is prime", "is_prime"),
+    ("Find the maximum number in list", "max_of_list"),
+    ("Calculate factorial", "factorial"),
+    ("Fibonacci sequence generator", "fibonacci"),
+    ("Find max in a list", "max_of_list"),
+]
+
+
+@pytest.mark.parametrize("prompt,expected", CHAOS_PROMPTS)
+def test_template_synonyms_match(prompt, expected):
+    tpl = match_template(prompt)
+    assert tpl is not None and tpl.name == expected
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    ["Reverse a linked list in place", "Write a quantum annealing scheduler", "Sort a list ascending"],
+)
+def test_templates_do_not_overmatch(prompt):
+    assert match_template(prompt) is None
+
+
+def test_every_template_is_valid_safe_and_green():
+    """Templates are the last-resort tier: their tests must validate, pass policy, and pass in the sandbox."""
+    from codeforge.agents.test_validator import validate_tests
+    from codeforge.policy.code_policy import evaluate_code_policy
+    from codeforge.resilience.templates import _TEMPLATES
+    from codeforge.sandbox.runner import run_pytest_sandboxed
+
+    assert len(_TEMPLATES) >= 5
+    for t in _TEMPLATES:
+        ok, reason = validate_tests(t.tests, None)
+        assert ok, f"{t.name}: {reason}"
+        assert evaluate_code_policy(t.code + "\n" + t.tests).verdict == "allow", t.name
+        res = run_pytest_sandboxed(t.code, t.tests, timeout_s=10)
+        assert res.exit_code == 0, f"{t.name}: {res.stdout}"

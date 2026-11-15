@@ -12,7 +12,7 @@ class Template(NamedTuple):
 _TEMPLATES: list[Template] = [
     Template(
         name="palindrome",
-        patterns=[r"\bpalindrome\b", r"\bis_palindrome\b"],
+        patterns=[r"palindrom"],
         code=(
             "def is_palindrome(s: str) -> bool:\n"
             "    \"\"\"Checks if a string is a palindrome (case and punctuation preserved).\"\"\"\n"
@@ -77,7 +77,7 @@ _TEMPLATES: list[Template] = [
     ),
     Template(
         name="fizzbuzz",
-        patterns=[r"\bfizzbuzz\b", r"\bfizz_buzz\b"],
+        patterns=[r"fizz\s*_?\s*buzz"],
         code=(
             "def fizzbuzz(n: int) -> list[str]:\n"
             "    \"\"\"Generates FizzBuzz sequence from 1 to n.\"\"\"\n"
@@ -105,7 +105,11 @@ _TEMPLATES: list[Template] = [
     ),
     Template(
         name="list_sum",
-        patterns=[r"\blist_sum\b", r"\bsum of (?:a )?list\b", r"\blist/tuple sum\b", r"\bsum_numbers\b"],
+        patterns=[
+            r"\blist_sum\b",
+            r"\bsum_numbers\b",
+            r"\b(?:sum|total|add up)\b.*\b(?:list|numbers|array|sequence|tuple|elements|values|items)\b",
+        ],
         code=(
             "from typing import Sequence\n\n"
             "def list_sum(nums: Sequence[int | float]) -> int | float:\n"
@@ -122,7 +126,11 @@ _TEMPLATES: list[Template] = [
     ),
     Template(
         name="reverse_string",
-        patterns=[r"\breverse string\b", r"\breverse_string\b"],
+        patterns=[
+            r"\breverse_string\b",
+            r"\breverse\b.*\b(?:string|text|word|characters)\b",
+            r"\b(?:string|text)\b.*\b(?:reverse|backwards?)\b",
+        ],
         code=(
             "def reverse_string(s: str) -> str:\n"
             "    \"\"\"Reverses a string.\"\"\"\n"
@@ -138,7 +146,7 @@ _TEMPLATES: list[Template] = [
     ),
     Template(
         name="is_prime",
-        patterns=[r"\bis_prime\b", r"\bprime number\b"],
+        patterns=[r"\bprime\b", r"\bis_prime\b"],
         code=(
             "def is_prime(n: int) -> bool:\n"
             "    \"\"\"Determines if an integer n is prime.\"\"\"\n"
@@ -160,7 +168,11 @@ _TEMPLATES: list[Template] = [
     ),
     Template(
         name="max_of_list",
-        patterns=[r"\bmax_of_list\b", r"\bmaximum of list\b", r"\bfind_max\b"],
+        patterns=[
+            r"\bmax_of_list\b",
+            r"\bfind_max\b",
+            r"\b(?:max|maximum|largest|biggest|greatest)\b.*\b(?:list|sequence|array|numbers|elements|values)\b",
+        ],
         code=(
             "from typing import Sequence\n\n"
             "def max_of_list(nums: Sequence[int | float]) -> int | float:\n"
@@ -174,6 +186,8 @@ _TEMPLATES: list[Template] = [
             "def test_max_cases():\n"
             "    assert max_of_list([1, 5, 3]) == 5\n"
             "    assert max_of_list([-10, -2]) == -2\n"
+            "    assert max_of_list([7]) == 7\n"
+            "    assert max_of_list((2.5, 1.5)) == 2.5\n"
             "    with pytest.raises(ValueError):\n"
             "        max_of_list([])\n"
         ),
