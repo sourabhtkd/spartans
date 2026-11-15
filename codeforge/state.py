@@ -91,6 +91,7 @@ class CodeForgeState(TypedDict, total=False):
     tests_frozen: bool
     tests_valid: bool
     escalate_reason: str
+    quota_exceeded: bool
 
 
 _TIER_RANK = {"cache": 0, "primary": 1, "fallback": 2, "template": 3, "refused": 4}

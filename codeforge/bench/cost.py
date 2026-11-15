@@ -7,6 +7,7 @@ Tokens, latency and cost are read from the `metrics` table written by the meteri
 Quality is measured by running generated code against the HIDDEN reference tests.
 """
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,7 +15,6 @@ from typing import Any
 
 from sqlalchemy import func
 
-from codeforge import llm
 from codeforge.bench.chaos import isolated_run
 from codeforge.config import get_settings
 from codeforge.entrypoint import submit
@@ -67,8 +67,6 @@ def load_script() -> list[dict[str, str]]:
 
 def run_mode(mode: str, script: list[dict[str, str]], offline: bool) -> ModeResult:
     assert mode in {"baseline", "optimized"}
-    import os
-
     result = ModeResult(mode=mode)
     saved_cache_env = os.environ.get("CODEFORGE_CACHE_ENABLED")
     with isolated_run(rate=0.0, outage=False, seed=7, offline=offline, fast=True):
@@ -122,11 +120,8 @@ def run_mode(mode: str, script: list[dict[str, str]], offline: bool) -> ModeResu
 
 def verdict(base: ModeResult, opt: ModeResult) -> dict[str, Any]:
     saving = (1 - opt.total_cost / base.total_cost) * 100 if base.total_cost else 0.0
-    return {
-        "saving_pct": saving,
-        "no_quality_drop": opt.pass_rate >= base.pass_rate,
-        "meets_target": saving >= 30.0 and opt.pass_rate >= base.pass_rate,
-    }
+    no_drop = opt.pass_rate >= base.pass_rate
+    return {"saving_pct": saving, "no_quality_drop": no_drop, "meets_target": saving >= 30.0 and no_drop}
 
 
 def render_report(base: ModeResult, opt: ModeResult, meta: dict[str, Any]) -> str:
@@ -181,6 +176,3 @@ def render_report(base: ModeResult, opt: ModeResult, meta: dict[str, Any]) -> st
         ]
     return "\n".join(lines) + "\n"
 
-
-def reset_after() -> None:
-    llm.reset_breakers()

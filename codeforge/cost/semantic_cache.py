@@ -175,7 +175,6 @@ class SemanticCache:
             return
         key = make_cache_key(request_text, role)
         values = {
-            "request_text": request_text,
             "embedding_json": json.dumps(_compute_embedding(request_text)),
             "guard_tokens": json.dumps(sorted(extract_guard_tokens(request_text))),
             "code": code,

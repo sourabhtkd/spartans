@@ -1,40 +1,5 @@
-import pytest
+"""Shared fixtures live in tests/conftest.py (isolated storage, no real keys, as_profile).
 
-
-@pytest.fixture(autouse=True)
-def _isolated_storage(tmp_path, monkeypatch):
-    """Every test gets its own sqlite DB + checkpoint file; never touches real state."""
-    monkeypatch.setenv("CODEFORGE_DB_URL", f"sqlite:///{tmp_path}/test.db")
-    monkeypatch.setenv("CODEFORGE_CHECKPOINT_PATH", str(tmp_path / "ckpt.db"))
-    import codeforge.cost.semantic_cache as sc
-
-    monkeypatch.setattr(sc, "_semantic_cache", None)
-    monkeypatch.setenv("CODEFORGE_EMBEDDINGS", "hash")  # fast & offline; model-backed test opts out
-    # Never let tests reach a real provider, even if a dev has keys in .env.
-    monkeypatch.setenv("GROQ_API_KEY", "")
-    monkeypatch.setenv("FALLBACK_API_KEY", "")
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
-    monkeypatch.setenv("CHAOS_FAILURE_RATE", "0")  # tests that want chaos opt in explicitly
-    monkeypatch.setenv("TOTAL_OUTAGE", "false")
-    monkeypatch.setenv("CODEFORGE_PROFILE", "student_a")
-    from codeforge.config import clear_settings_cache
-    from codeforge.llm import clear_llm_cache, reset_breakers
-
-    clear_llm_cache()
-    reset_breakers()
-    clear_settings_cache()
-    yield
-    clear_settings_cache()
-
-
-@pytest.fixture
-def as_profile(monkeypatch):
-    """Switch the active config profile (identity always comes from config)."""
-    from codeforge.config import clear_settings_cache
-
-    def _switch(name: str) -> None:
-        monkeypatch.setenv("CODEFORGE_PROFILE", name)
-        clear_settings_cache()
-
-    return _switch
+Imported explicitly: `import *` skips underscore names, which would silently drop the autouse fixture.
+"""
+from tests.conftest import _isolated_storage, as_profile  # noqa: F401

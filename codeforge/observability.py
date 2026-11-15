@@ -55,27 +55,40 @@ def _langfuse_mask(*, data: Any, **kwargs: Any) -> Any:
     return mask_obj(data)
 
 
+_langfuse_ready: bool | None = None  # None = not attempted yet
+
+
+def _init_langfuse_v3() -> bool:
+    """Create the (process-wide) Langfuse v3 client once; it owns a background exporter thread."""
+    from langfuse import Langfuse
+
+    settings = get_settings()
+    Langfuse(
+        public_key=settings.langfuse_public_key,
+        secret_key=settings.langfuse_secret_key,
+        host=settings.langfuse_host,
+        mask=_langfuse_mask,
+    )
+    return True
+
+
 def langfuse_handler() -> Any:
     """Return a Langfuse LangChain CallbackHandler (v3, falling back to v2), or None.
 
-    Inputs/outputs are masked via Langfuse's ``mask`` hook (v3). If keys are configured but the
+    The v3 client is built once per process; only the cheap handler is created per call.
+    Inputs/outputs are masked via Langfuse's ``mask`` hook. If keys are configured but the
     handler cannot be created, a warning is logged once; the pipeline is never interrupted.
     """
-    global _langfuse_warned
+    global _langfuse_warned, _langfuse_ready
     settings = get_settings()
     if not (settings.langfuse_public_key and settings.langfuse_secret_key):
         return None
     try:
         try:  # Langfuse v3
-            from langfuse import Langfuse
             from langfuse.langchain import CallbackHandler as HandlerV3
 
-            Langfuse(
-                public_key=settings.langfuse_public_key,
-                secret_key=settings.langfuse_secret_key,
-                host=settings.langfuse_host,
-                mask=_langfuse_mask,
-            )
+            if _langfuse_ready is None:
+                _langfuse_ready = _init_langfuse_v3()
             return HandlerV3()
         except ImportError:  # Langfuse v2
             from langfuse.callback import CallbackHandler as HandlerV2  # type: ignore[import-not-found]

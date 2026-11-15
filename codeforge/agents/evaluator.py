@@ -3,6 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from codeforge.agents.context import load_prompt
 from codeforge.guard.pii import mask_obj
 from codeforge.llm import AllModelsDown, resilient_invoke
 from codeforge.state import CodeForgeState, merge_tier
@@ -21,7 +22,7 @@ class EvaluatorAgent:
     status comes only from the real pytest exit code."""
 
     def __init__(self) -> None:
-        self.system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
+        self.system_prompt = load_prompt("evaluator")
 
     def __call__(self, state: CodeForgeState) -> dict[str, Any]:
         events = list(state.get("events", []))

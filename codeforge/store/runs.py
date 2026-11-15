@@ -1,5 +1,4 @@
 import hashlib
-import json
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -8,7 +7,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from codeforge.config import Identity, current_identity, get_settings
-from codeforge.policy.code_policy import POLICY_VERSION
 from codeforge.state import RunResult
 from codeforge.store.db import PolicyDenial, Run, init_db
 
@@ -103,9 +101,7 @@ class RunStore:
         with self.session_factory() as session:
             run = session.query(Run).filter(Run.idem_key == idem_key).first()
             if run and run.status == "done":
-                data = json.loads(run.result_json)
-                data["cached"] = True
-                return RunResult(**data)
+                return RunResult.model_validate_json(run.result_json).model_copy(update={"cached": True})
             return None
 
     def claim(
@@ -135,7 +131,6 @@ class RunStore:
                         tests=tests,
                         result_json="{}",
                         status="running",
-                        policy_version=POLICY_VERSION,
                         created_at=datetime.now(UTC),
                     )
                 )
@@ -199,7 +194,6 @@ class RunStore:
                 tests=tests,
                 result_json=result.model_dump_json(),
                 status="done",
-                policy_version=POLICY_VERSION,
                 created_at=datetime.now(UTC),
             )
             session.add(new_run)

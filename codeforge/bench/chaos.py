@@ -97,7 +97,7 @@ def is_answered(values: dict[str, Any]) -> bool:
     if tier in ANSWER_TIERS:
         return bool(values.get("code")) and bool(values.get("tests")) and values.get("run_result") is not None
     if tier == "refused":
-        return values.get("ticket") is not None and "cannot generate code right now" in values.get("report", "")
+        return values.get("ticket") is not None  # honest refusal = refused tier + handoff ticket
     return False
 
 

@@ -108,7 +108,6 @@ def human_approval_node(state: CodeForgeState) -> dict[str, Any]:
             rec.approver_id = decision.approver_id
             rec.verdict = "approved" if decision.approved else "rejected"
             rec.comment = decision.comment
-            rec.updated_at = datetime.now(UTC)
             session.commit()
     logger.info(
         "approval_decided", thread_id=thread_id, verdict="approved" if decision.approved else "rejected"

@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
-from codeforge.agents.context import request_with_context
+from codeforge.agents.context import load_prompt, request_with_context
 from codeforge.llm import AllModelsDown, resilient_invoke
 from codeforge.state import CodeForgeState, RouteDecision, merge_tier
 
@@ -11,7 +11,7 @@ _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "router.md"
 
 class RouterAgent:
     def __init__(self) -> None:
-        self.system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
+        self.system_prompt = load_prompt("router")
 
     def __call__(self, state: CodeForgeState) -> dict[str, Any]:
         req_text = state.get("raw_request_masked", "")

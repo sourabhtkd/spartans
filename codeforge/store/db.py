@@ -31,7 +31,6 @@ class Run(Base):
     tests: Mapped[str] = mapped_column(Text)
     result_json: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default="done")  # running | done
-    policy_version: Mapped[str] = mapped_column(String(8), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -47,7 +46,6 @@ class Approval(Base):
     verdict: Mapped[str] = mapped_column(String(32), default="pending")
     comment: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
 class Ticket(Base):
@@ -91,12 +89,10 @@ class CacheEntry(Base):
     __tablename__ = "cache_entries"
 
     cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
-    request_text: Mapped[str] = mapped_column(Text)
     embedding_json: Mapped[str] = mapped_column(Text)
     guard_tokens: Mapped[str] = mapped_column(Text)
     code: Mapped[str] = mapped_column(Text)
     tests: Mapped[str] = mapped_column(Text)
-    policy_verdict: Mapped[str] = mapped_column(String(32), default="allow")
     policy_version: Mapped[str] = mapped_column(String(8), default="")
     role: Mapped[str] = mapped_column(String(32), default="student")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
@@ -132,6 +128,7 @@ def _enable_wal(dbapi_conn: Any, _record: Any) -> None:
 
 _ENGINE_LOCK = threading.Lock()
 _ENGINES: dict[str, Engine] = {}
+_SESSIONMAKERS: dict[str, "sessionmaker[Any]"] = {}
 
 
 def _file_engine(db_url: str) -> Engine:
@@ -153,6 +150,13 @@ def init_db(db_url: str | None = None) -> "sessionmaker[Any]":
     if ":memory:" in url:
         engine = create_engine(url, connect_args={"check_same_thread": False})
         Base.metadata.create_all(bind=engine)
-    else:
-        engine = _file_engine(url)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+        return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    with _ENGINE_LOCK:
+        factory = _SESSIONMAKERS.get(url)
+    if factory is None:
+        factory = sessionmaker(
+            bind=_file_engine(url), autoflush=False, autocommit=False, expire_on_commit=False
+        )
+        with _ENGINE_LOCK:
+            factory = _SESSIONMAKERS.setdefault(url, factory)
+    return factory

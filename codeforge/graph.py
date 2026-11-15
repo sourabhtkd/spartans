@@ -57,7 +57,7 @@ def _traced(name: str, fn: Any) -> Any:
         t0 = time.perf_counter()
         try:
             out = fn(state)
-        except BaseException as exc:
+        except Exception as exc:  # GraphInterrupt is an Exception subclass
             kind = "node_paused" if type(exc).__name__ == "GraphInterrupt" else "node_error"
             logger.info(kind, node=name, duration_ms=round((time.perf_counter() - t0) * 1000, 1))
             raise
@@ -86,6 +86,7 @@ def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
         return {
             "raw_request_masked": masked_req,
             "identity": identity,
+            "quota_exceeded": True,
             "report": f"❌ Quota Exceeded: {e}",
             "events": [{"stage": "quota_check", "status": "exceeded"}],
         }
@@ -278,7 +279,7 @@ def escalate_check_node(state: CodeForgeState) -> dict[str, Any]:
 
 def report_node(state: CodeForgeState) -> dict[str, Any]:
     # If report was already set by quota exceeded, keep it
-    if state.get("report") and "Quota Exceeded" in state["report"]:
+    if state.get("quota_exceeded"):  # ingress already wrote the report
         return {}
     rendered = render_report(state)
     return {"report": rendered}
@@ -286,7 +287,7 @@ def report_node(state: CodeForgeState) -> dict[str, Any]:
 
 # Conditional routing predicates
 def route_after_ingress(state: CodeForgeState) -> Literal["report", "cache_lookup"]:
-    if state.get("report") and "Quota Exceeded" in state["report"]:
+    if state.get("quota_exceeded"):
         return "report"
     ticket = state.get("ticket")
     if ticket and ticket.priority == "P1":

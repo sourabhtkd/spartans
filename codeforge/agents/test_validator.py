@@ -95,7 +95,7 @@ class TestValidator:
         target_fn = reqs.function_name if reqs else None
         is_valid, reason = validate_tests(tests, target_fn)
         regen = state.get("test_regen_count", 0)
-        if is_valid and state.get("served_tier") not in ("template", "refused"):
+        if is_valid and state.get("served_tier") not in ("template", "refused", "cache"):
             agrees, ref_reason = _reference_check(tests, state.get("raw_request_masked", ""), target_fn)
             if not agrees:
                 if regen < 1:

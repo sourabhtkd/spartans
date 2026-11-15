@@ -25,6 +25,7 @@ socket.socket = BlockedSocket
 
 
 _MAX_OUTPUT_CHARS = 4096
+_MAX_RAW_CHARS = 65536
 _UNSHARE_OK: bool | None = None
 
 
@@ -45,7 +46,8 @@ def _unshare_available() -> bool:
 
 def mask_and_truncate(raw: str, limit: int = _MAX_OUTPUT_CHARS) -> str:
     """Mask BEFORE truncating so a secret cut at the boundary can't slip past the regexes."""
-    return mask_text(raw)[:limit]
+    # Bound regex work on huge outputs; anything past the cap is dropped by the final truncation anyway.
+    return mask_text(raw[:_MAX_RAW_CHARS])[:limit]
 
 
 def _get_preexec_fn(timeout_s: int, mem_mb: int = 512) -> Callable[[], None]:

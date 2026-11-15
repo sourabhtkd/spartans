@@ -16,11 +16,12 @@ from codeforge.resilience.templates import match_template
 from codeforge.state import GeneratedCode, GeneratedTests, Requirements, RouteDecision
 
 
+def _content(message: Any) -> str:
+    return str(message["content"] if isinstance(message, dict) else getattr(message, "content", message))
+
+
 def _text(messages: Any) -> str:
-    parts = []
-    for m in messages:
-        parts.append(m["content"] if isinstance(m, dict) else str(getattr(m, "content", m)))
-    return "\n".join(parts)
+    return "\n".join(_content(m) for m in messages)
 
 
 class _SimStructured:
@@ -28,7 +29,7 @@ class _SimStructured:
         self.schema = schema
 
     def invoke(self, messages: Any, config: dict[str, Any] | None = None) -> dict[str, Any]:
-        user = messages[-1]["content"] if isinstance(messages[-1], dict) else str(messages[-1])
+        user = _content(messages[-1])
         parsed = self._answer(user)
         out_text = parsed.model_dump_json() if parsed is not None else ""
         in_tokens = max(1, len(_text(messages)) // 4)

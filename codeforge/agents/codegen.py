@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any
 
+from codeforge.agents.context import load_prompt
 from codeforge.llm import AllModelsDown, resilient_invoke
 from codeforge.state import CodeForgeState, GeneratedCode, merge_tier
 
@@ -9,7 +10,7 @@ _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "codegen.md"
 
 class CodeGenAgent:
     def __init__(self) -> None:
-        self.system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
+        self.system_prompt = load_prompt("codegen")
 
     def __call__(self, state: CodeForgeState) -> dict[str, Any]:
         reqs = state.get("requirements")

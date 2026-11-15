@@ -35,7 +35,6 @@ from codeforge.store.runs import (
     compute_idempotency_key,
 )
 from evals.harness import (
-    GOOD_TESTS,
     REFERENCE_DIR,
     cassette_invoke,
     memory_graph,
@@ -412,4 +411,3 @@ def test_zz_golden_gate_summary() -> None:
     )
     assert not hard_bad, f"HARD gate failed (must be 100%): {hard_bad}"
     assert soft_pct >= 85.0, f"SOFT gate failed (<85%): {soft_bad}"
-    assert GOOD_TESTS  # keep import used
