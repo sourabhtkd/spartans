@@ -104,7 +104,6 @@ def incident_1_student_a() -> None:
 
     graph = build_graph()
     thread_id = f"demo_inc1_{int(time.time())}"
-    config = {"configurable": {"thread_id": thread_id}}
     state = submit(user_prompt, thread_id=thread_id, graph=graph).values
 
     policy = state.get("policy")
@@ -138,7 +137,6 @@ def incident_2_student_b() -> None:
 
     graph = build_graph()
     thread_id = f"demo_inc2_{int(time.time())}"
-    config = {"configurable": {"thread_id": thread_id}}
     state = submit(user_prompt, thread_id=thread_id, graph=graph).values
 
     print(f"{Colors.YELLOW}[Sandbox Runner]{Colors.END} Sandbox was {Colors.BOLD}NEVER CALLED{Colors.END} (zero execution)")
@@ -163,7 +161,6 @@ def incident_3_student_c() -> None:
 
     graph = build_graph()
     thread_id = f"demo_inc3_{int(time.time())}"
-    config = {"configurable": {"thread_id": thread_id}}
     state = submit(raw_prompt, thread_id=thread_id, graph=graph).values
 
     ticket = state.get("ticket")
@@ -200,7 +197,6 @@ def incident_4_chaos_resilience() -> None:
     graph = build_graph()
     prompt = "Write an is_palindrome function"
     thread_id = f"demo_inc4_{int(time.time())}"
-    config = {"configurable": {"thread_id": thread_id}}
 
     print(f"{Colors.BLUE}[Resilience Layer]{Colors.END} Executing with jitter retries and fallback to verified templates...")
     state = submit(prompt, thread_id=thread_id, graph=graph).values

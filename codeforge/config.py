@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     approval: dict[str, Any] = {}
     cache: dict[str, Any] = {}
     resilience: dict[str, Any] = {}
+    storage: dict[str, Any] = {}
+    compaction: dict[str, Any] = {}
 
     @classmethod
     def load(cls, config_path: Path | str = "config.yaml") -> "Settings":

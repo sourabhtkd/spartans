@@ -47,7 +47,7 @@ def extract_guard_tokens(text: str) -> set[str]:
     return tokens
 
 
-_model = None
+_model: Any = None
 
 
 def _get_embedding_model() -> Any:

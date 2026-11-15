@@ -1,4 +1,5 @@
 import sys
+from collections.abc import MutableMapping
 from typing import Any
 
 import structlog
@@ -8,10 +9,11 @@ from codeforge.guard.pii import mask_obj
 
 
 def mask_processor(
-    logger: Any, method_name: str, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+    logger: Any, method_name: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
     """Last-mile processor that ensures all values in event_dict have PII masked."""
-    return mask_obj(event_dict)
+    masked: MutableMapping[str, Any] = mask_obj(dict(event_dict))
+    return masked
 
 
 _configured = False

@@ -13,3 +13,8 @@ sandbox: {timeout_s: 10, mem_mb: 512}
 approval: {expiry_minutes: 30}
 cache: {threshold: 0.92, ttl_hours: 24}
 resilience: {max_retries: 3, base_s: 0.5, cap_s: 8, breaker_failures: 5, breaker_window_s: 60, breaker_cooldown_s: 30}
+
+storage:
+  db_url: sqlite:///codeforge.db
+  checkpoint_path: checkpoints.db
+compaction: {max_turns: 6, keep_last: 4}

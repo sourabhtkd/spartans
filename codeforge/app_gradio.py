@@ -1,6 +1,5 @@
 import json
 import os
-import uuid
 
 import gradio as gr
 

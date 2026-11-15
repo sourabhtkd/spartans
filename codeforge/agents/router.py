@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from codeforge.llm import resilient_invoke
 from codeforge.state import CodeForgeState, RouteDecision
@@ -23,6 +23,7 @@ class RouterAgent:
         except Exception:  # noqa: BLE001 - fallback to keyword router on model outage
             # Plain Python keyword routing during outages
             lowered = req_text.lower()
+            kind: Literal["python_function", "sql", "other"]
             if any(k in lowered for k in ["select", "insert", "sql", "from", "table"]):
                 kind = "sql"
             elif any(k in lowered for k in ["function", "python", "def", "code", "write", "palindrome", "factorial"]):

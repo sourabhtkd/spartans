@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from typing import Any, Literal
 
@@ -256,6 +257,21 @@ def route_after_sandbox(
     return "escalate_check"
 
 
+_CHECKPOINTERS: dict[str, SqliteSaver] = {}
+
+
+def _shared_checkpointer() -> SqliteSaver:
+    """One SqliteSaver per checkpoint path (config storage.checkpoint_path)."""
+    path = os.environ.get("CODEFORGE_CHECKPOINT_PATH") or str(
+        get_settings().storage.get("checkpoint_path", "checkpoints.db")
+    )
+    if path not in _CHECKPOINTERS:
+        conn = sqlite3.connect(path, check_same_thread=False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        _CHECKPOINTERS[path] = SqliteSaver(conn)
+    return _CHECKPOINTERS[path]
+
+
 def build_graph(checkpointer: Any | None = None) -> Any:
     """Builds and compiles the complete CodeForge StateGraph."""
     graph = StateGraph(CodeForgeState)
@@ -294,7 +310,6 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     graph.add_edge("report", END)
 
     if checkpointer is None:
-        conn = sqlite3.connect("checkpoints.db", check_same_thread=False)
-        checkpointer = SqliteSaver(conn)
+        checkpointer = _shared_checkpointer()
 
     return graph.compile(checkpointer=checkpointer)
