@@ -133,9 +133,51 @@ def cache_enabled() -> bool:
     return get_settings().codeforge_cache_enabled
 
 
+_REDIS_PREFIX = "cf:cache:"
+_redis_client: Any = None
+_redis_client_url: str | None = None
+
+
+def _get_redis() -> Any:
+    """Process-wide Redis client for the configured REDIS_URL, or None when Redis is not configured."""
+    global _redis_client, _redis_client_url
+    url = get_settings().redis_url
+    if not url:
+        return None
+    if _redis_client is None or _redis_client_url != url:
+        import redis
+
+        _redis_client = redis.Redis.from_url(url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+        _redis_client_url = url
+    return _redis_client
+
+
 class SemanticCache:
     def __init__(self, session_factory: "sessionmaker[Session] | None" = None) -> None:
         self.session_factory = session_factory or init_db()
+
+    # ---- Redis backend (optional; any Redis error falls back to SQLite so the cache never breaks a run) ----
+    def _redis_lookup(
+        self, client: Any, target_guard: set[str], target_emb: Any, threshold: float, role: str
+    ) -> dict[str, Any] | None:
+        for key in client.scan_iter(match=f"{_REDIS_PREFIX}*", count=200):
+            entry = client.hgetall(key)  # TTL is enforced by Redis EXPIRE
+            if not entry or entry.get("role") != role or entry.get("policy_version") != POLICY_VERSION:
+                continue
+            if set(json.loads(entry["guard_tokens"])) != target_guard:
+                continue
+            cand = np.asarray(json.loads(entry["embedding_json"]), dtype=np.float32)
+            if cand.shape != target_emb.shape:
+                continue
+            sim = float(np.dot(target_emb, cand))
+            if sim >= threshold:
+                return {"code": entry["code"], "tests": entry["tests"], "similarity": sim}
+        return None
+
+    def _redis_store(self, client: Any, key: str, values: dict[str, Any]) -> None:
+        name = f"{_REDIS_PREFIX}{key}"
+        client.hset(name, mapping={k: str(v) for k, v in values.items() if k != "created_at"})
+        client.expire(name, max(1, int(get_settings().cache.ttl_hours * 3600)))
 
     def lookup(
         self, request_text: str, context_free: bool = True, role: str = "student"
@@ -147,6 +189,13 @@ class SemanticCache:
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=cfg.ttl_hours)
         target_guard = extract_guard_tokens(request_text)
         target_emb = np.asarray(_compute_embedding(request_text), dtype=np.float32)
+
+        client = _get_redis()
+        if client is not None:
+            try:
+                return self._redis_lookup(client, target_guard, target_emb, threshold, role)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("redis_cache_lookup_failed_falling_back_to_sqlite", error=str(exc))
 
         with self.session_factory() as session:
             entries = (
@@ -182,6 +231,13 @@ class SemanticCache:
             "policy_version": POLICY_VERSION,
             "created_at": datetime.now(UTC),
         }
+        client = _get_redis()
+        if client is not None:
+            try:
+                self._redis_store(client, key, values)
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("redis_cache_store_failed_falling_back_to_sqlite", error=str(exc))
         with self.session_factory() as session:
             existing = session.get(CacheEntry, key)
             if existing:

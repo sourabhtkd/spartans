@@ -1,7 +1,10 @@
+from codeforge.store.conversations import ConversationNotFound, ConversationStore
 from codeforge.store.db import (
     Approval,
     CacheEntry,
+    Conversation,
     Feedback,
+    Message,
     Metric,
     Run,
     Ticket,
@@ -17,7 +20,11 @@ from codeforge.store.runs import (
 __all__ = [
     "Approval",
     "CacheEntry",
+    "Conversation",
+    "ConversationNotFound",
+    "ConversationStore",
     "Feedback",
+    "Message",
     "Metric",
     "QuotaExceeded",
     "Run",

@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     codeforge_embeddings: str = "model"  # "hash" = fast offline fallback (tests)
     codeforge_db_url: str | None = None  # overrides storage.db_url
     codeforge_checkpoint_path: str | None = None  # overrides storage.checkpoint_path
+    redis_url: str | None = None  # e.g. redis://redis:6379/1; semantic cache uses Redis when set
     sandbox_backend: str = "local"  # "docker" for container isolation
     sandbox_docker_image: str = "codeforge-sandbox"
 

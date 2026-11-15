@@ -76,7 +76,7 @@ graph TD;
 | **1. Pipeline & Orchestration** | Pipeline Owner | LangGraph state graph machine, Multi-agent reasoning chain (`Router`, `Requirements`, `CodeGen`, `TestGen`, `TestValidator`), AST syntax validation, repair loop on test failure. |
 | **2. Safety & Security (R1, R2)** | Safety Owner | Strict identity isolation from configuration, PII scrubber (Credit Cards with Luhn, Aadhaar with Verhoeff, Phone numbers, API keys), pure AST policy gate, and isolated tempdir sandbox with `rlimits` and blocked network. |
 | **3. Reliability & Cost (R4, R5)** | Reliability & Cost Owner | Exponential retry loops with full jitter, circuit breakers, 60% chaos injection testing, offline template degraded tier, semantic cache with token guard verification, and message compaction. |
-| **4. Quality, HITL & Evals (R6)** | Quality & Evals Owner | 85-case golden evaluation suite (54 hard / 31 soft) with hard/soft thresholds, CI integration, human-in-the-loop approval interrupts, P1/P2/P3 support escalation, Gradio 5-tab UI, and 47-case adversarial red team suite. |
+| **4. Quality, HITL & Evals (R6)** | Quality & Evals Owner | 85-case golden evaluation suite (54 hard / 31 soft) with hard/soft thresholds, CI integration, human-in-the-loop approval interrupts, P1/P2/P3 support escalation, Streamlit 5-page UI with top navigation, and 47-case adversarial red team suite. |
 
 ---
 
@@ -112,7 +112,7 @@ codeforge/
 ├── cost/               # metering callback, guarded semantic cache, history compaction
 ├── bench/              # chaos + cost benchmarks, simulated provider (clearly labelled)
 ├── llm.py              # the single resilient call path (metering + Langfuse + retries + breaker + fallback)
-├── ui/                 # web UI: handlers.py (what buttons do), layout.py (the Gradio page)
+├── ui/                 # web UI: handlers.py (what buttons do), app.py + pages/ (the Streamlit app)
 └── config.py           # identity/role/quotas from config.yaml; never from message text
 evals/
 ├── golden_set.json     # 85 cases: hard (must be 100%) and soft (>= 85%)
@@ -163,18 +163,34 @@ uv run python -m codeforge.cli "Write a function to check if a string is a palin
 CODEFORGE_PROFILE=instructor uv run python -m codeforge.cli "Write an is_prime checker"
 ```
 
-### Gradio Interactive Web UI (5 Tabs)
+### Streamlit Web UI (top navigation, 5 pages)
 ```bash
 uv run python -m codeforge.ui
 ```
-Access the application at `http://localhost:7860`:
-- **Chat**: Code generation, honest status, solution/tests viewer, 👍/👎 feedback flywheel.
+Access the application at `http://localhost:8501`:
+- **Chat**: a real conversation. Each chat has its own session id (`conv_xxxxxxxx`), is saved in the DB (tables `conversations` / `messages`) and listed on the left so you can reopen it. Follow-ups ("now add type hints") get the earlier turns as context. Live progress shows each pipeline step; every reply has a solution/tests viewer and 👍/👎 feedback.
+
+**Observability per conversation.** Every user and assistant message is logged as a structured `chat_message` event (PII-masked, with `conversation_id`). With `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` set, Langfuse shows one **session per conversation** and one **trace per turn** (pipeline nodes and LLM calls nested under it, tagged with the user and role); 👍/👎 is recorded as a `user_feedback` score on the turn's trace.
 - **My Runs**: Role-isolated run history (cross-user access strictly blocked).
 - **Reviewer Queue**: Instructor-only approval dashboard for sensitive operations.
 - **Tickets**: Sanitized human support escalation tickets.
 - **Ops**: Real-time token cost table, circuit breaker status, chaos toggle.
 
 ---
+
+## Run with Docker
+
+Brings up the Streamlit UI, Redis (semantic cache), and a self-hosted Langfuse v3 stack (web, worker, Postgres, ClickHouse, MinIO). SQLite lives in the `codeforge-data` volume.
+
+```bash
+cp .env.docker.example .env.docker   # set GROQ_API_KEY and replace every CHANGE_ME
+make up                              # = docker compose --env-file .env.docker up -d
+```
+
+- UI: http://localhost:8501 (bound to loopback only: identity switching is a demo feature)
+- Langfuse: http://localhost:3000 (login with `LANGFUSE_INIT_USER_*` from `.env.docker`)
+- CLI: `docker compose --env-file .env.docker run --rm app python -m codeforge.cli "reverse a string"`
+- Stop: `make down` (add `-v` to the compose command to also delete volumes)
 
 ## Testing & CI Evaluation Gates
 
@@ -192,7 +208,7 @@ Without a cassette they are **skipped and reported as skipped, never counted as 
 Record them against a real provider with `GROQ_API_KEY=... make record`.
 
 ### Flywheel: thumbs-down -> golden case -> fix
-1. A user clicks 👎 in the Gradio chat (stored in the `feedback` table).
+1. A user clicks 👎 in the Streamlit chat (stored in the `feedback` table).
 2. Write a hidden reference test capturing what they expected: `evals/reference_tests/<name>.py`.
 3. `uv run python scripts/feedback_to_golden.py <feedback_id> --reference <name>.py` appends a new golden case.
 4. `make gate` fails on the new case; fix the code/template/prompt; the gate goes green.
@@ -223,7 +239,7 @@ computed from the run, never hardcoded.
 ## Known Limitations (honest notes)
 - R3 is partial (explicit-human / repeated-denial / failed-repair escalation with P1 tickets; no sentiment triage). R7 (SQL agent) is not built.
 - On macOS the sandbox cannot apply an address-space rlimit or a network namespace; it still enforces timeout, CPU/file/fd limits, scrubbed env and a Python-level socket block. On Linux `unshare -rn` and `RLIMIT_NPROC` are used when available; `SANDBOX_BACKEND=docker` (see `Dockerfile.sandbox`) gives full isolation.
-- The Gradio profile dropdown is a **demo-only**, process-global identity switch; the server binds to `127.0.0.1` by default (`CODEFORGE_HOST` to override). Do not expose it publicly.
+- The Streamlit profile dropdown is a **demo-only**, process-global identity switch; the server binds to `127.0.0.1` by default (`CODEFORGE_HOST` to override). Do not expose it publicly.
 - Schema is created with `create_all` (no migrations); delete the local sqlite files after model changes.
 
 ---

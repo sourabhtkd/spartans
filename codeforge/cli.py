@@ -28,7 +28,7 @@ def main() -> None:
         print("\n⏸ Execution paused: Code requires reviewer approval.")
         print(f"Thread ID: {thread_id}")
         print(f"Reasons: {reasons}")
-        print("Review in Gradio Reviewer Queue or run approval resume.")
+        print("Review in the Reviewer Queue page or run approval resume.")
         return
 
     report = result.values.get("report", "No report generated.")

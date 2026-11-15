@@ -6,7 +6,7 @@ profiles:
 quotas: {student: {runs_per_hour: 20}, instructor: {runs_per_hour: 200}}
 models:
   small: {provider: groq, name: llama-3.1-8b-instant, in_per_1k: 0.00005, out_per_1k: 0.00008}
-  large: {provider: groq, name: llama-3.3-70b-versatile, in_per_1k: 0.00059, out_per_1k: 0.00079}
+  large: {provider: groq, name: openai/gpt-oss-120b, in_per_1k: 0.00059, out_per_1k: 0.00079}
   fallback: {provider: groq, name: openai/gpt-oss-20b, in_per_1k: 0.0001, out_per_1k: 0.0005}
 agent_tiers: {router: small, requirements: small, codegen: large, testgen: large, evaluator: small, handoff: small, compaction: small}
 sandbox: {timeout_s: 10, mem_mb: 512}

@@ -108,6 +108,36 @@ class PolicyDenial(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class Conversation(Base):
+    """One chat session. Its id doubles as the Langfuse session id."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(String(120), default="New chat")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class Message(Base):
+    """One chat message (content is always PII-masked before it is stored)."""
+
+    __tablename__ = "messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[str] = mapped_column(String(64), index=True)
+    role: Mapped[str] = mapped_column(String(16))  # user | assistant
+    content: Mapped[str] = mapped_column(Text)
+    code: Mapped[str] = mapped_column(Text, default="")
+    tests: Mapped[str] = mapped_column(Text, default="")
+    thread_id: Mapped[str] = mapped_column(String(64), default="", index=True)  # the pipeline run for this turn
+    status: Mapped[str] = mapped_column(String(16), default="done")  # done | paused | error
+    served_by: Mapped[str] = mapped_column(String(16), default="")
+    trace_id: Mapped[str] = mapped_column(String(64), default="")  # Langfuse trace of the turn
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 def _default_db_url() -> str:
     from codeforge.config import get_settings
 

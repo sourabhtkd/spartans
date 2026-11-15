@@ -1,19 +1,44 @@
-"""What each button in the web UI does. Plain functions: no Gradio imports, easy to unit test.
+"""What each button in the web UI does. Plain functions: no UI-framework imports, easy to unit test.
 
 Every handler works as the identity from config (see codeforge.config.current_identity).
 """
 import json
 import os
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from sqlalchemy import func
 
 from codeforge.config import clear_settings_cache, current_identity, get_settings
-from codeforge.entrypoint import submit
+from codeforge.entrypoint import SubmitResult, submit
 from codeforge.hitl.approval import expire_stale, resume_approval
 from codeforge.llm import breaker_states
+from codeforge.observability import get_logger, score_trace
 from codeforge.pipeline import build_graph
-from codeforge.store.db import Approval, Feedback, Metric, Ticket, init_db
+from codeforge.pipeline.tracing import step_listener
+from codeforge.privacy.pii import mask_text
+from codeforge.store.conversations import ConversationStore
+from codeforge.store.db import Approval, Feedback, Message, Metric, Ticket, init_db
 from codeforge.store.runs import RunStore
+
+chat_log = get_logger("chat")
+
+
+def _reply_from(result: SubmitResult) -> tuple[str, str, str, str]:
+    """(reply markdown, code, tests, status) for a finished or paused pipeline run."""
+    values = result.values
+    code, tests = values.get("code", ""), values.get("tests", "")
+    if result.pending_approval:
+        policy = values.get("policy")
+        reasons = "; ".join(policy.reasons) if policy else "File/Network access requested"
+        msg = (
+            f"### ⏸ Execution Paused: Reviewer Approval Required\n"
+            f"- **Thread ID**: `{result.thread_id}`\n"
+            f"- **Policy Reasons**: {reasons}\n"
+            f"Please switch to the **Reviewer Queue** page as an instructor to Approve or Reject this run."
+        )
+        return msg, code, tests, "paused"
+    return values.get("report", "No report generated."), code, tests, "done"
 
 
 def submit_request(prompt: str, thread_id: str | None = None) -> tuple[str, str, str, str]:
@@ -21,26 +46,105 @@ def submit_request(prompt: str, thread_id: str | None = None) -> tuple[str, str,
         return "Please enter a valid programming request.", "", "", ""
 
     result = submit(prompt, thread_id=thread_id or None)
-    tid = result.thread_id
-    values = result.values
+    reply, code, tests, _status = _reply_from(result)
+    return reply, code, tests, result.thread_id
 
-    if result.pending_approval:
-        policy = values.get("policy")
-        reasons = "; ".join(policy.reasons) if policy else "File/Network access requested"
-        msg = (
-            f"### ⏸ Execution Paused: Reviewer Approval Required\n"
-            f"- **Thread ID**: `{tid}`\n"
-            f"- **Policy Reasons**: {reasons}\n"
-            f"Please switch to the **Reviewer Queue** tab as an instructor to Approve or Reject this run."
-        )
-        return msg, values.get("code", ""), values.get("tests", ""), tid
 
-    return (
-        values.get("report", "No report generated."),
-        values.get("code", ""),
-        values.get("tests", ""),
-        tid,
+# ---------------------------------------------------------------- chat conversations
+
+
+@dataclass
+class ChatTurn:
+    conversation_id: str
+    reply: str
+    code: str = ""
+    tests: str = ""
+    thread_id: str = ""
+    status: str = "done"  # done | paused | error | invalid
+    served_by: str = ""
+    trace_id: str = ""
+
+
+def _log_message(msg: Message) -> None:
+    chat_log.info(
+        "chat_message",
+        conversation_id=msg.conversation_id,
+        message_id=msg.id,
+        role=msg.role,
+        thread_id=msg.thread_id,
+        status=msg.status,
+        content=msg.content,
     )
+
+
+def chat_turn(
+    conversation_id: str | None, text: str, on_step: Callable[[str], None] | None = None
+) -> ChatTurn:
+    """One user message -> one pipeline run -> one assistant message, inside a conversation.
+
+    Both messages are stored (masked) and logged; the conversation id is the Langfuse session id.
+    ``on_step`` is told each pipeline node as it starts (for live progress in the UI).
+    """
+    if not text or not text.strip():
+        return ChatTurn(conversation_id or "", "Please enter a valid programming request.", status="invalid")
+
+    store = ConversationStore()
+    conv_id = conversation_id or store.create()
+    history = store.history(conv_id)  # also verifies ownership; excludes the message being sent
+    _log_message(store.append(conv_id, "user", mask_text(text)))
+
+    token = step_listener.set(on_step)
+    try:
+        result = submit(text, history=history or None, session_id=conv_id)
+        reply, code, tests, status = _reply_from(result)
+        thread_id, served_by, trace_id = result.thread_id, str(result.values.get("served_by", "")), result.trace_id
+    except Exception as exc:  # noqa: BLE001 - a failed turn must still be answered and recorded
+        chat_log.exception("chat_turn_failed", conversation_id=conv_id)
+        reply, code, tests, status = f"Sorry, this request failed ({type(exc).__name__}). Please try again.", "", "", "error"
+        thread_id = served_by = trace_id = ""
+    finally:
+        step_listener.reset(token)
+
+    _log_message(
+        store.append(
+            conv_id, "assistant", reply, code=code, tests=tests, thread_id=thread_id,
+            status=status, served_by=served_by, trace_id=trace_id,
+        )
+    )
+    return ChatTurn(conv_id, reply, code, tests, thread_id, status, served_by, trace_id)
+
+
+def new_conversation() -> str:
+    return ConversationStore().create()
+
+
+def list_conversations() -> list[tuple[str, str]]:
+    """(conversation id, title) for the current user, most recently active first."""
+    return [(c.id, c.title) for c in ConversationStore().list_mine()]
+
+
+def load_messages(conversation_id: str) -> list[Message]:
+    return ConversationStore().messages(conversation_id)
+
+
+def refresh_turn(thread_id: str) -> str:
+    """Pick up the outcome of a turn that was paused for approval; returns its current status."""
+    graph = build_graph()
+    snap = graph.get_state({"configurable": {"thread_id": thread_id}})
+    if not snap.values:
+        return "unknown"
+    if "human_approval" in tuple(snap.next):
+        return "paused"
+    values = snap.values
+    ConversationStore().update_assistant_message(
+        thread_id,
+        content=values.get("report", "No report generated."),
+        code=values.get("code", ""),
+        tests=values.get("tests", ""),
+        status="done",
+        served_by=str(values.get("served_by", "")),
+    )
+    return "done"
 
 
 def record_feedback(run_id: str, thumb: str, comment: str) -> str:
@@ -52,6 +156,9 @@ def record_feedback(run_id: str, thumb: str, comment: str) -> str:
             fb = Feedback(run_id=run_id, thumb=thumb, comment=comment)
             session.add(fb)
             session.commit()
+            msg = session.query(Message).filter(Message.thread_id == run_id, Message.role == "assistant").first()
+            if msg is not None and msg.trace_id:
+                score_trace(msg.trace_id, "user_feedback", 1.0 if thumb == "up" else 0.0, comment)
         return f"Feedback recorded ({thumb})! Thank you."
     except Exception as e:  # noqa: BLE001
         return f"Error recording feedback: {e}"

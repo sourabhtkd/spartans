@@ -24,7 +24,11 @@ def request_with_context(state: CodeForgeState) -> str:
     history = state.get("history") or []
     if not history:
         return request
-    lines = [f"- {turn.get('role', 'user')}: {str(turn.get('content', ''))[:300]}" for turn in history]
+    # Assistant turns carry the previously generated code, which follow-ups need, so they get more room.
+    lines = [
+        f"- {turn.get('role', 'user')}: {str(turn.get('content', ''))[: 1200 if turn.get('role') == 'assistant' else 300]}"
+        for turn in history
+    ]
     return "Conversation so far:\n" + "\n".join(lines) + f"\n\nCurrent request:\n{request}"
 
 

@@ -17,7 +17,12 @@ from pydantic import BaseModel
 
 from codeforge.config import get_settings
 from codeforge.cost.metering import MeteringCallback
-from codeforge.observability import current_request_id, get_logger, langfuse_handler
+from codeforge.observability import (
+    current_request_id,
+    current_session_id,
+    get_logger,
+    langfuse_handler,
+)
 from codeforge.resilience.breaker import CircuitBreaker
 from codeforge.resilience.chaos import maybe_fail
 from codeforge.resilience.retry import calculate_backoff, get_retry_after, is_transient
@@ -65,7 +70,7 @@ def reset_breakers() -> None:
 
 
 def breaker_states() -> dict[str, str]:
-    """Current state of each breaker (shown in the Gradio Ops tab)."""
+    """Current state of each breaker (shown in the Ops page)."""
     return {name: b.state for name, b in _BREAKERS.items()}
 
 
@@ -110,6 +115,8 @@ def _invoke_once(agent: str, tier: str, label: str, messages: Any, schema: type[
                 "attempt": attempt,
                 "breaker_state": get_breaker(label).state,
                 "request_id": current_request_id.get(),
+                "session_id": current_session_id.get(),
+                **({"langfuse_session_id": current_session_id.get()} if current_session_id.get() else {}),
             },
         },
     )

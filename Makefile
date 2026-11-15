@@ -1,4 +1,4 @@
-.PHONY: test gate gate-demo lint typecheck record bench-chaos bench-cost
+.PHONY: test gate gate-demo lint typecheck record bench-chaos bench-cost docker-build up down logs
 
 lint:
 	uv run ruff check .
@@ -25,3 +25,18 @@ bench-chaos:
 
 bench-cost:
 	uv run python scripts/cost_benchmark.py
+
+DC = docker compose --env-file .env.docker
+
+docker-build:
+	$(DC) build app
+
+up:
+	@test -f .env.docker || cp .env.docker.example .env.docker
+	$(DC) up -d
+
+down:
+	$(DC) down
+
+logs:
+	$(DC) logs -f app langfuse-web

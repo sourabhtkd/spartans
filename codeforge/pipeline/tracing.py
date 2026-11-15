@@ -1,6 +1,7 @@
 """Structured logging around every graph node (start / end / paused / error, with duration)."""
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from typing import Any
 
 import structlog
@@ -10,6 +11,9 @@ from codeforge.observability import get_logger
 from codeforge.state import CodeForgeState
 
 logger = get_logger("pipeline")
+
+# Optional callback told the node name each time a node starts (the chat UI shows it as live progress).
+step_listener: ContextVar[Callable[[str], None] | None] = ContextVar("step_listener", default=None)
 
 
 def node_facts(output: dict[str, Any]) -> dict[str, Any]:
@@ -35,6 +39,12 @@ def traced_node(name: str, node: Callable[[CodeForgeState], Any]) -> Any:
     def run(state: CodeForgeState) -> Any:
         structlog.contextvars.bind_contextvars(agent=name)
         logger.info("node_start", node=name)
+        listener = step_listener.get()
+        if listener is not None:
+            try:
+                listener(name)
+            except Exception as exc:  # noqa: BLE001 - UI progress must never break a node
+                logger.debug("step_listener_failed", node=name, error=str(exc))
         started = time.perf_counter()
 
         def elapsed_ms() -> float:

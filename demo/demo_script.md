@@ -17,7 +17,7 @@ This document provides a comprehensive, step-by-step presentation narrative for 
 1. **Pipeline & Graph Architect (Owner 1)**: LangGraph state machine orchestration, multi-agent reasoning chain (`Router`, `Requirements`, `CodeGen`, `TestGen`, `TestValidator`), and AST-based self-repair loops.
 2. **Security & Safety Engineer (Owner 2)**: Hard identity isolation (R1), PII redaction engine (Luhn credit cards & Verhoeff Aadhaar algorithms), pure AST policy gate (R2), and isolated tempdir subprocess sandbox runner with system resource limits (`rlimits`) and blocked network.
 3. **Reliability & Performance Engineer (Owner 3)**: Adaptive retry loops with full jitter backoff, circuit breakers, 60% chaos resilience, fail-closed offline template fallback (R5), guarded semantic caching (R4), and conversation compaction.
-4. **Quality & Human-in-the-Loop Lead (Owner 4)**: Golden set evaluation gate (R6) with hard/soft thresholds, CI automation, support ticket escalation, reviewer approval queue, and the 5-tab Gradio interface.
+4. **Quality & Human-in-the-Loop Lead (Owner 4)**: Golden set evaluation gate (R6) with hard/soft thresholds, CI automation, support ticket escalation, reviewer approval queue, and the 5-page Streamlit interface.
 
 ---
 
@@ -85,16 +85,16 @@ make gate-demo
 
 ---
 
-## 4. Gradio UI Walkthrough (1 Minute)
+## 4. Streamlit UI Walkthrough (1 Minute)
 
 Launch the interactive web dashboard:
 ```bash
 uv run python -m codeforge.ui
 ```
-Open [http://localhost:7860](http://localhost:7860) to present the 5 tabs:
+Open [http://localhost:8501](http://localhost:8501) to present the 5 top-nav pages (profile switcher is the dropdown at the right of the nav bar):
 
-1. **Tab 1: Chat**: Profile displayed read-only from config; submit code requests; view honest markdown reports with pass/fail counts; click 👍 or 👎 to send feedback directly to the golden set flywheel.
-2. **Tab 2: My Runs**: Strict user data isolation. Queries `RunStore.get_my_runs()` using the authenticated identity; foreign runs return 404.
-3. **Tab 3: Reviewer Queue**: Accessible only to users with the `instructor` role. Displays suspended runs paused by LangGraph `interrupt()`; allows approving or rejecting sensitive file/socket operations.
-4. **Tab 4: Tickets**: View all escalated human handoff tickets (P1/P2/P3) with masked context and SLA deadlines.
-5. **Tab 5: Ops Dashboard**: Per-agent cost/latency from the metering table, circuit breaker states, and an instructor-only chaos slider.
+1. **Page 1: Chat**: Profile displayed read-only from config; submit code requests; view honest markdown reports with pass/fail counts; click 👍 or 👎 to send feedback directly to the golden set flywheel.
+2. **Page 2: My Runs**: Strict user data isolation. Queries `RunStore.get_my_runs()` using the authenticated identity; foreign runs return 404.
+3. **Page 3: Reviewer Queue**: Accessible only to users with the `instructor` role. Displays suspended runs paused by LangGraph `interrupt()`; allows approving or rejecting sensitive file/socket operations.
+4. **Page 4: Tickets**: View all escalated human handoff tickets (P1/P2/P3) with masked context and SLA deadlines.
+5. **Page 5: Ops Dashboard**: Per-agent cost/latency from the metering table, circuit breaker states, and an instructor-only chaos slider.
