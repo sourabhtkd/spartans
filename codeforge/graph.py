@@ -30,7 +30,8 @@ from codeforge.store.runs import (
 def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
     raw_req = state.get("raw_request_masked", "")
     masked_req = mask_text(raw_req)
-    identity = state.get("identity") or current_identity()
+    # Identity is ALWAYS read from config, never from graph input.
+    identity = current_identity()
 
     store = RunStore(identity_provider=lambda: identity)
     try:

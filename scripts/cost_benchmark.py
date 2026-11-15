@@ -1,6 +1,7 @@
 import argparse
 from pathlib import Path
 
+from codeforge.entrypoint import submit
 from codeforge.graph import build_graph
 
 SAMPLE_PROMPTS = [
@@ -27,10 +28,7 @@ def run_benchmark(mode: str = "optimized") -> None:
 
     for idx, prompt in enumerate(SAMPLE_PROMPTS):
         thread_id = f"bench_{mode}_{idx}"
-        state = graph.invoke(
-            {"raw_request_masked": prompt, "thread_id": thread_id},
-            config={"configurable": {"thread_id": thread_id}},
-        )
+        state = submit(prompt, thread_id=thread_id, graph=graph).values
         tier = state.get("served_tier", "primary")
         cache_hit = state.get("cache_hit", False)
 

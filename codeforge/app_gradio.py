@@ -5,6 +5,7 @@ import uuid
 import gradio as gr
 
 from codeforge.config import clear_settings_cache, current_identity, get_settings
+from codeforge.entrypoint import submit
 from codeforge.graph import build_graph
 from codeforge.hitl.approval import resume_approval
 from codeforge.state import ApprovalDecision
@@ -16,26 +17,12 @@ def submit_request(prompt: str, thread_id: str | None = None) -> tuple[str, str,
     if not prompt or not prompt.strip():
         return "Please enter a valid programming request.", "", "", ""
 
-    tid = thread_id or f"run_{uuid.uuid4().hex[:8]}"
-    ident = current_identity()
-    graph = build_graph()
-    config = {"configurable": {"thread_id": tid}}
+    result = submit(prompt, thread_id=thread_id or None)
+    tid = result.thread_id
+    values = result.values
 
-    initial_state = {
-        "thread_id": tid,
-        "raw_request_masked": prompt,
-        "identity": ident,
-    }
-
-    # Stream graph execution
-    for _ in graph.stream(initial_state, config=config):
-        pass
-
-    state = graph.get_state(config)
-
-    # Check for interrupt
-    if state.next and "human_approval" in state.next:
-        policy = state.values.get("policy")
+    if result.pending_approval:
+        policy = values.get("policy")
         reasons = "; ".join(policy.reasons) if policy else "File/Network access requested"
         msg = (
             f"### ⏸ Execution Paused: Reviewer Approval Required\n"
@@ -43,12 +30,14 @@ def submit_request(prompt: str, thread_id: str | None = None) -> tuple[str, str,
             f"- **Policy Reasons**: {reasons}\n"
             f"Please switch to the **Reviewer Queue** tab as an instructor to Approve or Reject this run."
         )
-        return msg, state.values.get("code", ""), state.values.get("tests", ""), tid
+        return msg, values.get("code", ""), values.get("tests", ""), tid
 
-    report = state.values.get("report", "No report generated.")
-    code = state.values.get("code", "")
-    tests = state.values.get("tests", "")
-    return report, code, tests, tid
+    return (
+        values.get("report", "No report generated."),
+        values.get("code", ""),
+        values.get("tests", ""),
+        tid,
+    )
 
 
 def submit_feedback(run_id: str, thumb: str, comment: str) -> str:

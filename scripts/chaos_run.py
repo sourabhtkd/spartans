@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 from codeforge.config import clear_settings_cache
+from codeforge.entrypoint import submit
 from codeforge.graph import build_graph
 
 REQUESTS = [
@@ -38,10 +39,7 @@ def run_chaos_benchmark() -> None:
     print("Running 20 requests under 60% transient chaos injection...")
     for idx, prompt in enumerate(REQUESTS):
         thread_id = f"chaos_req_{idx}"
-        state = graph.invoke(
-            {"raw_request_masked": prompt, "thread_id": thread_id},
-            config={"configurable": {"thread_id": thread_id}},
-        )
+        state = submit(prompt, thread_id=thread_id, graph=graph).values
         tier = state.get("served_tier", "primary")
         passed = state.get("run_result").exit_code == 0 if state.get("run_result") else False
         results.append({

@@ -11,6 +11,7 @@ import os
 import time
 
 from codeforge.config import clear_settings_cache
+from codeforge.entrypoint import submit
 from codeforge.graph import build_graph
 from codeforge.guard.pii import mask_text
 from codeforge.policy.code_policy import evaluate_code_policy
@@ -104,10 +105,7 @@ def incident_1_student_a() -> None:
     graph = build_graph()
     thread_id = f"demo_inc1_{int(time.time())}"
     config = {"configurable": {"thread_id": thread_id}}
-    state = graph.invoke(
-        {"raw_request_masked": user_prompt, "thread_id": thread_id},
-        config=config,
-    )
+    state = submit(user_prompt, thread_id=thread_id, graph=graph).values
 
     policy = state.get("policy")
     verdict = policy.verdict if isinstance(policy.verdict, str) else policy.verdict.value
@@ -141,10 +139,7 @@ def incident_2_student_b() -> None:
     graph = build_graph()
     thread_id = f"demo_inc2_{int(time.time())}"
     config = {"configurable": {"thread_id": thread_id}}
-    state = graph.invoke(
-        {"raw_request_masked": user_prompt, "thread_id": thread_id},
-        config=config,
-    )
+    state = submit(user_prompt, thread_id=thread_id, graph=graph).values
 
     print(f"{Colors.YELLOW}[Sandbox Runner]{Colors.END} Sandbox was {Colors.BOLD}NEVER CALLED{Colors.END} (zero execution)")
     print(f"\n{Colors.BOLD}Honest Refusal Delivered to Student B:{Colors.END}")
@@ -169,10 +164,7 @@ def incident_3_student_c() -> None:
     graph = build_graph()
     thread_id = f"demo_inc3_{int(time.time())}"
     config = {"configurable": {"thread_id": thread_id}}
-    state = graph.invoke(
-        {"raw_request_masked": raw_prompt, "thread_id": thread_id},
-        config=config,
-    )
+    state = submit(raw_prompt, thread_id=thread_id, graph=graph).values
 
     ticket = state.get("ticket")
     if ticket:
@@ -211,10 +203,7 @@ def incident_4_chaos_resilience() -> None:
     config = {"configurable": {"thread_id": thread_id}}
 
     print(f"{Colors.BLUE}[Resilience Layer]{Colors.END} Executing with jitter retries and fallback to verified templates...")
-    state = graph.invoke(
-        {"raw_request_masked": prompt, "thread_id": thread_id},
-        config=config,
-    )
+    state = submit(prompt, thread_id=thread_id, graph=graph).values
 
     served_tier = state.get("served_tier", "primary")
     run_res = state.get("run_result")
