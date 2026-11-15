@@ -12,8 +12,15 @@ from typing import Any
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
+from codeforge.agents.evaluator import EvaluationCritique
 from codeforge.resilience.templates import match_template
-from codeforge.state import GeneratedCode, GeneratedTests, Requirements, RouteDecision
+from codeforge.state import (
+    GeneratedCode,
+    GeneratedTests,
+    HistorySummary,
+    Requirements,
+    RouteDecision,
+)
 
 
 def _content(message: Any) -> str:
@@ -22,6 +29,15 @@ def _content(message: Any) -> str:
 
 def _text(messages: Any) -> str:
     return "\n".join(_content(m) for m in messages)
+
+
+def _function_name_from_prompt(prompt: str) -> str:
+    """Read `function_name` from the 'Requirements:' JSON block of a CodeGen/TestGen prompt."""
+    try:
+        requirements, _ = json.JSONDecoder().raw_decode(prompt.split("Requirements:\n", 1)[1])
+        return str(requirements["function_name"])
+    except (IndexError, ValueError, KeyError, TypeError):
+        return ""
 
 
 class _SimStructured:
@@ -51,9 +67,7 @@ class _SimStructured:
         return {"parsed": parsed, "raw": None, "parsing_error": None}
 
     def _answer(self, user: str) -> Any:
-        from codeforge.agents.evaluator import EvaluationCritique
-        from codeforge.state import HistorySummary
-
+        """Build the structured answer for this schema, or None when the simulator cannot answer."""
         if self.schema is EvaluationCritique:
             return EvaluationCritique(
                 clarity_score=0.0,
@@ -64,28 +78,20 @@ class _SimStructured:
         if self.schema is RouteDecision:
             return RouteDecision(kind="python_function", language="python", confidence=0.9)
         if self.schema is Requirements:
-            tpl = match_template(user)
-            return Requirements(function_name=tpl.name if tpl else "solve", description=user)
-        # codegen / testgen messages embed the Requirements JSON
-        try:
-            name = json.JSONDecoder().raw_decode(user.split("Requirements:\n", 1)[1])[0]["function_name"]
-        except (IndexError, ValueError, KeyError, TypeError):
-            name = ""
-        tpl = match_template(name or user)
-        if tpl is None:
+            template = match_template(user)
+            return Requirements(function_name=template.name if template else "solve", description=user)
+
+        # CodeGen / TestGen prompts embed the Requirements JSON; answer from the matching template.
+        template = match_template(_function_name_from_prompt(user) or user)
+        if template is None:
             return None
         if self.schema is GeneratedCode:
-            return GeneratedCode(code=tpl.code)
+            return GeneratedCode(code=template.code)
         if self.schema is GeneratedTests:
-            return GeneratedTests(tests=tpl.tests)
+            return GeneratedTests(tests=template.tests)
         return None
 
 
 class SimulatedLLM:
     def with_structured_output(self, schema: type, include_raw: bool = False) -> _SimStructured:
         return _SimStructured(schema)
-
-
-def install_simulated_provider(monkeypatch_target: Any) -> None:
-    """Replace the real client factory with the simulated one (module ``codeforge.llm``)."""
-    monkeypatch_target.get_llm_for_tier = lambda tier: SimulatedLLM()

@@ -7,12 +7,13 @@ import random
 import tempfile
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from typing import Any
+from unittest.mock import patch
 
 from codeforge import llm
-from codeforge.bench.offline import install_simulated_provider
+from codeforge.bench.offline import SimulatedLLM
 from codeforge.config import clear_settings_cache
 from codeforge.entrypoint import submit
 from codeforge.graph import build_graph
@@ -43,52 +44,56 @@ class RequestRow:
     breakers: dict[str, str] = field(default_factory=dict)
 
 
+def _reset_runtime_state() -> None:
+    """Forget cached settings/clients/breakers/cache so each run starts clean."""
+    from codeforge.cost import semantic_cache
+
+    clear_settings_cache()
+    llm.reset_breakers()
+    llm.clear_llm_cache()
+    semantic_cache._semantic_cache = None
+
+
 @contextmanager
 def isolated_run(rate: float, outage: bool, seed: int, offline: bool, fast: bool) -> Iterator[dict[str, int]]:
-    """Isolated DB + env + (optionally) simulated provider; restores everything on exit."""
-    keys = ["CODEFORGE_DB_URL", "CODEFORGE_CHECKPOINT_PATH", "CHAOS_FAILURE_RATE", "TOTAL_OUTAGE"]
-    saved = {k: os.environ.get(k) for k in keys}
-    real_maybe_fail, real_sleep, real_factory = llm.maybe_fail, llm.time.sleep, llm.get_llm_for_tier
+    """Run with a private DB, the given chaos settings and (optionally) the simulated provider.
+
+    Yields a counter dict whose "injected" entry counts synthetic failures. Everything patched
+    here (environment, llm functions) is restored on exit.
+    """
     counter = {"injected": 0}
-    with tempfile.TemporaryDirectory(prefix="cf_bench_") as tmp:
-        os.environ["CODEFORGE_DB_URL"] = f"sqlite:///{tmp}/bench.db"
-        os.environ["CODEFORGE_CHECKPOINT_PATH"] = f"{tmp}/ckpt.db"
-        os.environ["CHAOS_FAILURE_RATE"] = str(rate)
-        os.environ["TOTAL_OUTAGE"] = "true" if outage else "false"
-        clear_settings_cache()
-        llm.reset_breakers()
-        llm.clear_llm_cache()
-        random.seed(seed)
+    real_maybe_fail = llm.maybe_fail
 
-        def counting_maybe_fail(*a: Any, **k: Any) -> None:
-            try:
-                real_maybe_fail(*a, **k)
-            except Exception:
-                counter["injected"] += 1
-                raise
-
-        llm.maybe_fail = counting_maybe_fail  # type: ignore[assignment]
-        if offline:
-            install_simulated_provider(llm)
-        if fast:
-            llm.time.sleep = lambda s: None  # type: ignore[assignment]
+    def counting_maybe_fail(*args: Any, **kwargs: Any) -> None:
         try:
-            yield counter
-        finally:
-            llm.maybe_fail = real_maybe_fail  # type: ignore[assignment]
-            llm.time.sleep = real_sleep
-            llm.get_llm_for_tier = real_factory  # type: ignore[assignment]
-            for k, v in saved.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
-            clear_settings_cache()
-            llm.reset_breakers()
-            llm.clear_llm_cache()
-            import codeforge.cost.semantic_cache as sc
+            real_maybe_fail(*args, **kwargs)
+        except Exception:
+            counter["injected"] += 1
+            raise
 
-            sc._semantic_cache = None
+    with tempfile.TemporaryDirectory(prefix="cf_bench_") as tmp, ExitStack() as stack:
+        # ExitStack unwinds last-in-first-out: registered first, so this reset runs LAST,
+        # after the environment and the patches below have been restored.
+        stack.callback(_reset_runtime_state)
+        stack.enter_context(
+            patch.dict(
+                os.environ,
+                {
+                    "CODEFORGE_DB_URL": f"sqlite:///{tmp}/bench.db",
+                    "CODEFORGE_CHECKPOINT_PATH": f"{tmp}/ckpt.db",
+                    "CHAOS_FAILURE_RATE": str(rate),
+                    "TOTAL_OUTAGE": "true" if outage else "false",
+                },
+            )
+        )
+        _reset_runtime_state()  # pick up the new environment (before llm functions are patched)
+        stack.enter_context(patch.object(llm, "maybe_fail", counting_maybe_fail))
+        if offline:
+            stack.enter_context(patch.object(llm, "get_llm_for_tier", lambda tier: SimulatedLLM()))
+        if fast:
+            stack.enter_context(patch.object(llm.time, "sleep", lambda seconds: None))
+        random.seed(seed)
+        yield counter
 
 
 def is_answered(values: dict[str, Any]) -> bool:

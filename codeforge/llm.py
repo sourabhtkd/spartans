@@ -120,40 +120,61 @@ def _invoke_once(agent: str, tier: str, label: str, messages: Any, schema: type[
     return cast(T, parsed)
 
 
-def resilient_invoke(agent: str, messages: Any, schema: type[T]) -> tuple[T, str]:
-    """Call the model for ``agent`` with retries, breaker and fallback. Returns (result, tier)."""
-    settings = get_settings()
-    tiers = [(settings.agent_tiers.get(agent, "small"), "primary"), ("fallback", "fallback")]
-    max_retries = int(settings.resilience.get("max_retries", 3))
-    base_s = float(settings.resilience.get("base_s", 0.5))
-    cap_s = float(settings.resilience.get("cap_s", 8.0))
+def _retry_delay(exc: Exception, attempt: int) -> float:
+    """Seconds to wait before the next attempt: honour Retry-After, else full-jitter backoff."""
+    cfg = get_settings().resilience
+    retry_after = get_retry_after(exc)
+    if retry_after is not None:
+        return retry_after
+    return calculate_backoff(attempt, float(cfg.get("base_s", 0.5)), float(cfg.get("cap_s", 8.0)))
 
-    for tier, label in tiers:
-        breaker = get_breaker(label)
-        if not breaker.can_attempt():
+
+def _call_provider(agent: str, tier: str, label: str, messages: Any, schema: type[T]) -> T | None:
+    """Call one provider, retrying transient errors. Returns the result, or None to give up on it.
+
+    Breaker accounting: success closes it; a permanent error or running out of retries counts as
+    one failure; bad model output (LLMOutputError) is not a provider outage, so it does not count.
+    """
+    breaker = get_breaker(label)
+    max_retries = int(get_settings().resilience.get("max_retries", 3))
+
+    for attempt in range(max_retries):
+        try:
+            maybe_fail()  # chaos injection (no-op unless enabled)
+            result = _invoke_once(agent, tier, label, messages, schema, attempt)
+        except Exception as exc:  # noqa: BLE001 - classified below
+            logger.warning(
+                "llm_invocation_failed", agent=agent, provider=label, attempt=attempt,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            if isinstance(exc, LLMOutputError):
+                return None
+            if not is_transient(exc):
+                breaker.record_failure()
+                return None
+            if attempt == max_retries - 1:
+                breaker.record_failure()
+                return None
+            time.sleep(_retry_delay(exc, attempt))
+        else:
+            breaker.record_success()
+            return result
+    return None
+
+
+def resilient_invoke(agent: str, messages: Any, schema: type[T]) -> tuple[T, str]:
+    """Call the model for ``agent``. Tries the primary tier, then the fallback model.
+
+    Returns (result, label) where label is "primary" or "fallback". Raises AllModelsDown when
+    both are unavailable (callers then use templates or refuse honestly).
+    """
+    primary_tier = get_settings().agent_tiers.get(agent, "small")
+    for tier, label in ((primary_tier, "primary"), ("fallback", "fallback")):
+        if not get_breaker(label).can_attempt():
             logger.warning("circuit_breaker_open_skipping", provider=label, agent=agent)
             continue
-
-        for attempt in range(max_retries):
-            try:
-                maybe_fail()  # chaos injection (no-op unless enabled)
-                result = _invoke_once(agent, tier, label, messages, schema, attempt)
-                breaker.record_success()
-                return result, label
-            except Exception as exc:  # noqa: BLE001 - classified below
-                logger.warning(
-                    "llm_invocation_failed", agent=agent, provider=label, attempt=attempt,
-                    error=f"{type(exc).__name__}: {exc}",
-                )
-                if isinstance(exc, LLMOutputError):
-                    break  # bad output is not a provider outage: try the next tier, don't trip the breaker
-                if not is_transient(exc):
-                    breaker.record_failure()
-                    break
-                if attempt == max_retries - 1:
-                    breaker.record_failure()
-                else:
-                    retry_after = get_retry_after(exc)
-                    time.sleep(retry_after if retry_after is not None else calculate_backoff(attempt, base_s, cap_s))
+        result = _call_provider(agent, tier, label, messages, schema)
+        if result is not None:
+            return result, label
 
     raise AllModelsDown(f"All LLM models down or open for agent '{agent}'")

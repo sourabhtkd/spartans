@@ -52,6 +52,39 @@ def _get_or_create_pending(thread_id: str, requester_id: str, code_hash: str, re
         return str(rec.approval_id)
 
 
+def _parse_decision(raw: Any) -> ApprovalDecision:
+    """Accept the resume payload as a dict or an ApprovalDecision; anything else is a rejection."""
+    if isinstance(raw, ApprovalDecision):
+        return raw
+    if isinstance(raw, dict):
+        return ApprovalDecision(**raw)
+    return ApprovalDecision(approved=False, approver_id="", comment="Invalid decision payload")
+
+
+def _approver_role(approver_id: str) -> str:
+    for profile in get_settings().profiles.values():
+        if profile.user_id == approver_id:
+            return profile.role
+    return "student"  # unknown people get no privileges
+
+
+def _enforce_approver_rules(decision: ApprovalDecision, requester_id: str) -> ApprovalDecision:
+    """Turn an approval into a rejection unless an instructor other than the requester gave it.
+
+    resume_approval already refuses these cases up front; this is the second line of defence.
+    Rejections always pass through unchanged.
+    """
+    if not decision.approved:
+        return decision
+    if _approver_role(decision.approver_id) != "instructor":
+        reason = "Rejected: only instructors may approve code."
+    elif decision.approver_id == requester_id:
+        reason = "Rejected: self-approval is forbidden."
+    else:
+        return decision
+    return ApprovalDecision(approved=False, approver_id=decision.approver_id, comment=reason)
+
+
 def human_approval_node(state: CodeForgeState) -> dict[str, Any]:
     """Pause the graph via interrupt() until an instructor decides. Fails closed."""
     code = state.get("code", "")
@@ -75,32 +108,7 @@ def human_approval_node(state: CodeForgeState) -> dict[str, Any]:
         }
     )
 
-    if isinstance(raw_decision, dict):
-        decision = ApprovalDecision(**raw_decision)
-    elif isinstance(raw_decision, ApprovalDecision):
-        decision = raw_decision
-    else:
-        decision = ApprovalDecision(approved=False, approver_id="", comment="Invalid decision payload")
-
-    # Defence in depth (resume_approval already enforces both rules).
-    if decision.approved:
-        approver_role = "student"
-        for prof in get_settings().profiles.values():
-            if prof.user_id == decision.approver_id:
-                approver_role = prof.role
-                break
-        if approver_role != "instructor":
-            decision = ApprovalDecision(
-                approved=False,
-                approver_id=decision.approver_id,
-                comment="Rejected: only instructors may approve code.",
-            )
-        elif decision.approver_id == requester_id:
-            decision = ApprovalDecision(
-                approved=False,
-                approver_id=decision.approver_id,
-                comment="Rejected: self-approval is forbidden.",
-            )
+    decision = _enforce_approver_rules(_parse_decision(raw_decision), requester_id)
 
     with init_db()() as session:
         rec = session.get(Approval, approval_id)

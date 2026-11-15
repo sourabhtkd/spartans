@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from sqlalchemy import func
 
@@ -65,56 +66,54 @@ def load_script() -> list[dict[str, str]]:
     return list(data)
 
 
+def _run_script(result: ModeResult, script: list[dict[str, str]], mode: str) -> None:
+    """Send every request through the graph; record latency, cache hits and reference-test passes."""
+    graph = build_graph()
+    for i, item in enumerate(script, start=1):
+        started = time.perf_counter()
+        values = submit(item["prompt"], thread_id=f"{mode}_{i}", graph=graph).values
+        result.wall_s.append(time.perf_counter() - started)
+        result.requests += 1
+        result.cache_hits += 1 if values.get("cache_hit") else 0
+        if values.get("code"):
+            reference = (REFERENCE_DIR / item["reference"]).read_text(encoding="utf-8")
+            result.ref_passed += run_pytest_sandboxed(values["code"], reference, timeout_s=10).exit_code == 0
+
+
+def _read_agent_metrics(mode: str) -> dict[str, dict[str, float]]:
+    """Per-agent totals for this mode's requests, read from the `metrics` table."""
+    with init_db()() as session:
+        rows = (
+            session.query(
+                Metric.agent,
+                func.count(Metric.id),
+                func.sum(Metric.input_tokens),
+                func.sum(Metric.output_tokens),
+                func.sum(Metric.cost_usd),
+                func.sum(Metric.latency_s),
+            )
+            .filter(Metric.request_id.like(f"{mode}_%"))
+            .group_by(Metric.agent)
+            .all()
+        )
+    return {
+        agent: {"calls": calls, "in": tokens_in or 0, "out": tokens_out or 0, "cost": cost or 0.0, "latency": latency or 0.0}
+        for agent, calls, tokens_in, tokens_out, cost, latency in rows
+    }
+
+
 def run_mode(mode: str, script: list[dict[str, str]], offline: bool) -> ModeResult:
+    """baseline = large model for every agent and no cache; optimized = configured cascade + cache."""
     assert mode in {"baseline", "optimized"}
     result = ModeResult(mode=mode)
-    saved_cache_env = os.environ.get("CODEFORGE_CACHE_ENABLED")
     with isolated_run(rate=0.0, outage=False, seed=7, offline=offline, fast=True):
-        settings = get_settings()
-        original_tiers = dict(settings.agent_tiers)
-        if mode == "baseline":
-            os.environ["CODEFORGE_CACHE_ENABLED"] = "0"
-            for k in settings.agent_tiers:
-                settings.agent_tiers[k] = "large"
-        else:
-            os.environ["CODEFORGE_CACHE_ENABLED"] = "1"
-        try:
-            graph = build_graph()
-            for i, item in enumerate(script, start=1):
-                tid = f"{mode}_{i}"
-                t0 = time.perf_counter()
-                vals = submit(item["prompt"], thread_id=tid, graph=graph).values
-                result.wall_s.append(time.perf_counter() - t0)
-                result.requests += 1
-                result.cache_hits += 1 if vals.get("cache_hit") else 0
-                if vals.get("code"):
-                    ref = (REFERENCE_DIR / item["reference"]).read_text(encoding="utf-8")
-                    result.ref_passed += run_pytest_sandboxed(vals["code"], ref, timeout_s=10).exit_code == 0
-            with init_db()() as session:
-                rows = (
-                    session.query(
-                        Metric.agent,
-                        func.count(Metric.id),
-                        func.sum(Metric.input_tokens),
-                        func.sum(Metric.output_tokens),
-                        func.sum(Metric.cost_usd),
-                        func.sum(Metric.latency_s),
-                    )
-                    .filter(Metric.request_id.like(f"{mode}_%"))
-                    .group_by(Metric.agent)
-                    .all()
-                )
-            result.per_agent = {
-                a: {"calls": c, "in": i or 0, "out": o or 0, "cost": cost or 0.0, "latency": lat or 0.0}
-                for a, c, i, o, cost, lat in rows
-            }
-        finally:
-            settings.agent_tiers.clear()
-            settings.agent_tiers.update(original_tiers)
-            if saved_cache_env is None:
-                os.environ.pop("CODEFORGE_CACHE_ENABLED", None)
-            else:
-                os.environ["CODEFORGE_CACHE_ENABLED"] = saved_cache_env
+        agent_tiers = get_settings().agent_tiers
+        tier_overrides = {agent: "large" for agent in agent_tiers} if mode == "baseline" else {}
+        cache_flag = "0" if mode == "baseline" else "1"
+        # patch.dict restores the original environment / tier mapping when the block exits.
+        with patch.dict(os.environ, {"CODEFORGE_CACHE_ENABLED": cache_flag}), patch.dict(agent_tiers, tier_overrides):
+            _run_script(result, script, mode)
+        result.per_agent = _read_agent_metrics(mode)
     return result
 
 

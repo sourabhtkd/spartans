@@ -87,135 +87,116 @@ def _get_preexec_fn(timeout_s: int, mem_mb: int = 512) -> Callable[[], None]:
 
 
 def parse_pytest_counts(output: str) -> tuple[int, int, str | None]:
-    """Parses passed count, failed count, and first failing test name from pytest output."""
-    passed = 0
-    failed = 0
-    last_failing_test: str | None = None
+    """Read (passed, failed, first failing test name) from pytest's summary output."""
 
-    passed_match = re.search(r"(\d+)\s+passed", output)
-    if passed_match:
-        passed = int(passed_match.group(1))
+    def count(pattern: str) -> int:
+        match = re.search(pattern, output)
+        return int(match.group(1)) if match else 0
 
-    failed_match = re.search(r"(\d+)\s+failed", output)
-    if failed_match:
-        failed = int(failed_match.group(1))
-
-    failing_test_match = re.search(r"FAILED\s+([^\n]+)", output)
-    if failing_test_match:
-        last_failing_test = failing_test_match.group(1).strip()
-
-    return passed, failed, last_failing_test
+    failing = re.search(r"FAILED\s+([^\n]+)", output)
+    return count(r"(\d+)\s+passed"), count(r"(\d+)\s+failed"), failing.group(1).strip() if failing else None
 
 
-def run_pytest_sandboxed(
-    code: str,
-    tests: str,
-    timeout_s: int = 10,
-    mem_mb: int = 512,
-) -> RunResult:
-    """Executes code and pytest tests in an isolated temporary directory sandbox
-    with scrubbed environment, no network access, rlimits, and process group timeouts.
+def _write_sandbox_files(tmpdir: str, code: str, tests: str) -> None:
+    for filename, content in (
+        ("solution.py", code),
+        ("test_solution.py", tests),
+        ("sitecustomize.py", _SITECUSTOMIZE_CONTENT),  # blocks sockets inside the child
+    ):
+        with open(os.path.join(tmpdir, filename), "w", encoding="utf-8") as f:
+            f.write(content)
+
+
+def _scrubbed_env(tmpdir: str) -> dict[str, str]:
+    """No host PATH, no secrets, no user site, no pytest plugins, dead proxies."""
+    return {
+        "PATH": "/usr/bin:/bin",
+        "PYTHONPATH": tmpdir,
+        "HOME": tmpdir,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "NO_PROXY": "*",
+        "HTTP_PROXY": "http://127.0.0.1:9",
+        "HTTPS_PROXY": "http://127.0.0.1:9",
+    }
+
+
+def _docker_command(tmpdir: str, mem_mb: int) -> list[str]:
+    image = os.environ.get("SANDBOX_DOCKER_IMAGE", "codeforge-sandbox")
+    return [
+        "docker", "run", "--rm", "--network", "none", "--memory", f"{mem_mb}m",
+        "--pids-limit", "64", "--read-only", "--tmpfs", "/tmp",
+        "-v", f"{tmpdir}:/w:ro", "-w", "/w", "-e", "PYTHONPATH=/w",
+        "-e", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1", image,
+        "python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=short", "/w/test_solution.py",
+    ]
+
+
+def _build_command(tmpdir: str, mem_mb: int) -> tuple[list[str], dict[str, str], str]:
+    """Pick the isolation backend. Returns (command, environment, isolation label)."""
+    if os.environ.get("SANDBOX_BACKEND", "local") == "docker":
+        return _docker_command(tmpdir, mem_mb), {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}, "docker_network_none"
+
+    pytest_cmd = [
+        sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:langsmith",
+        "--tb=short", os.path.join(tmpdir, "test_solution.py"),
+    ]
+    if _unshare_available():
+        return ["unshare", "-rn", *pytest_cmd], _scrubbed_env(tmpdir), "unshare_netns"
+    return pytest_cmd, _scrubbed_env(tmpdir), "python_socket_block"
+
+
+def _run_with_timeout(
+    cmd: list[str], env: dict[str, str], cwd: str, timeout_s: int, mem_mb: int
+) -> tuple[int | None, bool, str]:
+    """Run the command; on timeout kill its whole process group. Returns (exit_code, timed_out, output)."""
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,  # own process group, so the kill below also reaches children
+        preexec_fn=_get_preexec_fn(timeout_s=timeout_s, mem_mb=mem_mb),  # noqa: PLW1509 - required for rlimits
+    )
+    exit_code: int | None = None
+    timed_out = False
+    try:
+        stdout_b, stderr_b = proc.communicate(timeout=timeout_s)
+        exit_code = proc.returncode
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        stdout_b, stderr_b = proc.communicate()
+
+    output = stdout_b.decode("utf-8", errors="replace") + "\n" + stderr_b.decode("utf-8", errors="replace")
+    if timed_out:
+        output = f"Execution timed out after {timeout_s}s.\n" + output
+    return exit_code, timed_out, output
+
+
+def run_pytest_sandboxed(code: str, tests: str, timeout_s: int = 10, mem_mb: int = 512) -> RunResult:
+    """Run `tests` against `code` in a throwaway directory with pytest, in a restricted subprocess.
+
+    Restrictions: scrubbed environment, no network, resource limits, hard timeout.
+    The caller decides pass/fail from the returned exit code, never from the output text.
     """
     with tempfile.TemporaryDirectory(prefix="cf_sandbox_") as tmpdir:
-        solution_path = os.path.join(tmpdir, "solution.py")
-        test_path = os.path.join(tmpdir, "test_solution.py")
-        sitecustomize_path = os.path.join(tmpdir, "sitecustomize.py")
+        _write_sandbox_files(tmpdir, code, tests)
+        cmd, env, isolation = _build_command(tmpdir, mem_mb)
+        exit_code, timed_out, output = _run_with_timeout(cmd, env, tmpdir, timeout_s, mem_mb)
 
-        with open(solution_path, "w", encoding="utf-8") as f:
-            f.write(code)
-        with open(test_path, "w", encoding="utf-8") as f:
-            f.write(tests)
-        with open(sitecustomize_path, "w", encoding="utf-8") as f:
-            f.write(_SITECUSTOMIZE_CONTENT)
-
-        # Scrubbed environment: no host PATH, no secrets, no user site, no pytest plugins, dead proxies.
-        clean_env = {
-            "PATH": "/usr/bin:/bin",
-            "PYTHONPATH": tmpdir,
-            "HOME": tmpdir,
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONNOUSERSITE": "1",
-            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
-            "NO_PROXY": "*",
-            "HTTP_PROXY": "http://127.0.0.1:9",
-            "HTTPS_PROXY": "http://127.0.0.1:9",
-        }
-
-        backend = os.environ.get("SANDBOX_BACKEND", "local")
-        isolation = "python_socket_block"
-        prefix: list[str] = []
-        if backend == "docker":
-            isolation = "docker_network_none"
-        elif _unshare_available():
-            prefix = ["unshare", "-rn"]
-            isolation = "unshare_netns"
-
-        cmd = [
-            *prefix,
-            sys.executable,
-            "-m",
-            "pytest",
-            "-q",
-            "-p",
-            "no:cacheprovider",
-            "-p",
-            "no:langsmith",
-            "--tb=short",
-            test_path,
-        ]
-
-        if backend == "docker":
-            image = os.environ.get("SANDBOX_DOCKER_IMAGE", "codeforge-sandbox")
-            cmd = [
-                "docker", "run", "--rm", "--network", "none", "--memory", f"{mem_mb}m",
-                "--pids-limit", "64", "--read-only", "--tmpfs", "/tmp",
-                "-v", f"{tmpdir}:/w:ro", "-w", "/w", "-e", "PYTHONPATH=/w",
-                "-e", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1", image,
-                "python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=short", "/w/test_solution.py",
-            ]
-            clean_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
-
-        proc = subprocess.Popen(
-            cmd,
-            cwd=tmpdir,
-            env=clean_env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,
-            preexec_fn=_get_preexec_fn(timeout_s=timeout_s, mem_mb=mem_mb),  # noqa: PLW1509 - required for sandbox rlimits
-        )
-
-        timed_out = False
-        exit_code: int | None = None
-        try:
-            stdout_b, stderr_b = proc.communicate(timeout=timeout_s)
-            exit_code = proc.returncode
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                pass
-            stdout_b, stderr_b = proc.communicate()
-
-        raw_output = (
-            stdout_b.decode("utf-8", errors="replace")
-            + "\n"
-            + stderr_b.decode("utf-8", errors="replace")
-        )
-        if timed_out:
-            raw_output = f"Execution timed out after {timeout_s}s.\n" + raw_output
-
-        passed, failed, last_failing_test = parse_pytest_counts(raw_output)
-        masked_output = mask_and_truncate(raw_output)
-
-        return RunResult(
-            exit_code=exit_code,
-            timed_out=timed_out,
-            passed=passed,
-            failed=failed,
-            stdout=masked_output,
-            last_failing_test=last_failing_test,
-            cached=False,
-            isolation=isolation,
-        )
+    passed, failed, last_failing_test = parse_pytest_counts(output)
+    return RunResult(
+        exit_code=exit_code,
+        timed_out=timed_out,
+        passed=passed,
+        failed=failed,
+        stdout=mask_and_truncate(output),
+        last_failing_test=last_failing_test,
+        isolation=isolation,
+    )

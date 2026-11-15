@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 import structlog
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, START, StateGraph
 
 from codeforge.agents.codegen import CodeGenAgent
@@ -13,6 +14,8 @@ from codeforge.agents.router import RouterAgent
 from codeforge.agents.test_validator import TestValidator
 from codeforge.agents.testgen import TestGenAgent
 from codeforge.config import current_identity, get_settings
+from codeforge.cost.compaction import compact_history, llm_summarize
+from codeforge.cost.semantic_cache import get_semantic_cache
 from codeforge.guard.pii import mask_text
 from codeforge.hitl.approval import human_approval_node
 from codeforge.hitl.handoff import create_ticket, should_escalate
@@ -30,7 +33,7 @@ from codeforge.store.runs import (
 )
 
 
-def _summarise(name: str, out: dict[str, Any]) -> dict[str, Any]:
+def _summarise(out: dict[str, Any]) -> dict[str, Any]:
     """Small, PII-free facts about a node's output for structured logs / traces."""
     facts: dict[str, Any] = {}
     if "policy" in out and out["policy"] is not None:
@@ -58,19 +61,28 @@ def _traced(name: str, fn: Any) -> Any:
         try:
             out = fn(state)
         except Exception as exc:  # GraphInterrupt is an Exception subclass
-            kind = "node_paused" if type(exc).__name__ == "GraphInterrupt" else "node_error"
+            kind = "node_paused" if isinstance(exc, GraphInterrupt) else "node_error"
             logger.info(kind, node=name, duration_ms=round((time.perf_counter() - t0) * 1000, 1))
             raise
         logger.info(
             "node_end",
             node=name,
             duration_ms=round((time.perf_counter() - t0) * 1000, 1),
-            **(_summarise(name, out) if isinstance(out, dict) else {}),
+            **(_summarise(out) if isinstance(out, dict) else {}),
         )
         return out
 
     wrapper.__name__ = name
     return wrapper
+
+
+def _compacted_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Shorten long (already masked) chat history before any agent sees it."""
+    cfg = get_settings().compaction
+    max_turns = int(cfg.get("max_turns", 6))
+    if len(history) <= max_turns:
+        return history
+    return compact_history(history, max_turns, int(cfg.get("keep_last", 4)), summarizer=llm_summarize)
 
 
 def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
@@ -91,20 +103,9 @@ def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
             "events": [{"stage": "quota_check", "status": "exceeded"}],
         }
 
-    # Compact long history (masked) before any agent sees it.
-    history = state.get("history") or []
-    compaction_cfg = get_settings().compaction
-    if len(history) > int(compaction_cfg.get("max_turns", 6)):
-        from codeforge.cost.compaction import compact_history, llm_summarize
+    history = _compacted_history(state.get("history") or [])
 
-        history = compact_history(
-            history,
-            max_turns=int(compaction_cfg.get("max_turns", 6)),
-            keep_last=int(compaction_cfg.get("keep_last", 4)),
-            summarizer=llm_summarize,
-        )
-
-    # Pre-check explicit human request escalation
+    # An explicit request for a human opens a ticket right away.
     should_esc, reason, prio = should_escalate(masked_req)
     ticket = None
     if should_esc:
@@ -125,11 +126,8 @@ def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
 
 
 def cache_lookup(state: CodeForgeState) -> dict[str, Any]:
-    # Hook for guarded semantic cache (Task 14)
-    # Checks whether semantic cache has a verified solution
+    """Reuse a verified solution from the guarded semantic cache (a hit still goes through every gate)."""
     try:
-        from codeforge.cost.semantic_cache import get_semantic_cache
-
         cache = get_semantic_cache()
         entry = cache.lookup(
             state.get("raw_request_masked", ""),
@@ -149,28 +147,23 @@ def cache_lookup(state: CodeForgeState) -> dict[str, Any]:
 
 
 def router_node(state: CodeForgeState) -> dict[str, Any]:
-    agent = RouterAgent()
-    return agent(state)
+    return RouterAgent()(state)
 
 
 def requirements_node(state: CodeForgeState) -> dict[str, Any]:
-    agent = RequirementsAgent()
-    return agent(state)
+    return RequirementsAgent()(state)
 
 
 def codegen_node(state: CodeForgeState) -> dict[str, Any]:
-    agent = CodeGenAgent()
-    return agent(state)
+    return CodeGenAgent()(state)
 
 
 def testgen_node(state: CodeForgeState) -> dict[str, Any]:
-    agent = TestGenAgent()
-    return agent(state)
+    return TestGenAgent()(state)
 
 
 def test_validator_node(state: CodeForgeState) -> dict[str, Any]:
-    validator = TestValidator()
-    return validator(state)
+    return TestValidator()(state)
 
 
 def policy_gate_node(state: CodeForgeState) -> dict[str, Any]:
@@ -222,21 +215,18 @@ def sandbox_run_node(state: CodeForgeState) -> dict[str, Any]:
 
 
 def cache_store_node(state: CodeForgeState) -> dict[str, Any]:
-    # Hook for guarded semantic cache (Task 14)
+    """After a passing run, remember the solution in the semantic cache (context-free requests only)."""
     run_res = state.get("run_result")
-    if run_res and run_res.exit_code == 0:
+    passed = bool(run_res and run_res.exit_code == 0)
+    if passed and not state.get("history"):
         try:
-            from codeforge.cost.semantic_cache import get_semantic_cache
-
-            cache = get_semantic_cache()
-            if not state.get("history"):  # only context-free requests are cacheable
-                cache.store(
-                    request_text=state.get("raw_request_masked", ""),
-                    code=state.get("code", ""),
-                    tests=state.get("tests", ""),
-                    role=current_identity().role,
-                )
-        except Exception as e:  # noqa: BLE001
+            get_semantic_cache().store(
+                request_text=state.get("raw_request_masked", ""),
+                code=state.get("code", ""),
+                tests=state.get("tests", ""),
+                role=current_identity().role,
+            )
+        except Exception as e:  # noqa: BLE001 - caching is best-effort
             logger.debug("cache_store_error", error=str(e))
     return {}
 

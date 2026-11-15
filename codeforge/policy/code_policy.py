@@ -1,4 +1,5 @@
 import ast
+from dataclasses import dataclass, field
 
 from codeforge.state import PolicyDecision
 
@@ -79,6 +80,9 @@ DENY_CALL_NAMES = {
     "breakpoint",
 }
 
+# Calls whose attribute-name argument must be a visible string constant.
+DYNAMIC_ATTRIBUTE_FUNCTIONS = {"getattr", "setattr", "delattr", "hasattr"}
+
 ALLOWED_DUNDERS = {
     "__init__",
     "__name__",
@@ -97,10 +101,99 @@ def _is_denied_module(root: str) -> bool:
     return root.startswith("_") or root in PRIVATE_DENY_MODULES
 
 
+def _is_dunder(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__")
+
+
+def _is_string_constant(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
+@dataclass
+class _Findings:
+    """Reasons collected while walking the AST. Any `deny` wins over any `approval`."""
+
+    deny: list[str] = field(default_factory=list)
+    approval: list[str] = field(default_factory=list)
+
+
+def _check_import(findings: _Findings, module: str) -> None:
+    root = module.split(".")[0]
+    if root in DENY_IMPORTS or _is_denied_module(root):
+        findings.deny.append(f"Denied import '{module}'")
+    elif root in NEEDS_APPROVAL_IMPORTS:
+        findings.approval.append(f"Import requires approval: '{module}'")
+    elif root not in ALLOW_IMPORTS:
+        findings.approval.append(f"Unknown import requires approval: '{module}'")
+
+
+def _check_dynamic_attribute_call(findings: _Findings, node: ast.Call, fn_name: str) -> None:
+    """getattr/setattr/delattr/hasattr: the attribute name must be a visible string constant."""
+    if len(node.args) < 2 or not _is_string_constant(node.args[1]):
+        findings.deny.append(f"Denied dynamic attribute access via {fn_name}()")
+
+    first_arg = node.args[0] if node.args else None
+    if isinstance(first_arg, ast.Name) and first_arg.id in {"__builtins__", "builtins"}:
+        findings.deny.append(f"Denied access to builtins via {fn_name}()")
+
+    for arg in node.args:
+        if not _is_string_constant(arg):
+            continue
+        value = arg.value  # type: ignore[attr-defined]
+        if value in DENY_CALL_NAMES:
+            findings.deny.append(f"Denied {fn_name} for restricted function '{value}'")
+        elif _is_dunder(value) and value not in ALLOWED_DUNDERS:
+            findings.deny.append(f"Denied dynamic dunder access via {fn_name}('{value}')")
+
+
+def _check_call(findings: _Findings, node: ast.Call) -> None:
+    func = node.func
+    if isinstance(func, ast.Name):
+        name = func.id
+        if name in DENY_CALL_NAMES:
+            findings.deny.append(f"Denied call to '{name}()'")
+        elif name == "open":
+            findings.approval.append("Call to 'open()' requires approval")
+        elif name == "type" and len(node.args) == 3:
+            findings.approval.append("Dynamic class creation via type() requires approval")
+        elif name in DYNAMIC_ATTRIBUTE_FUNCTIONS:
+            _check_dynamic_attribute_call(findings, node, name)
+    elif isinstance(func, ast.Attribute):
+        method = func.attr
+        if method in DENY_CALL_NAMES:
+            findings.deny.append(f"Denied call to '{method}()'")
+        elif method in DENY_ATTR_CALLS:
+            findings.deny.append(f"Denied call to '.{method}()'")
+        elif method == "open":
+            findings.approval.append("Call to 'open()' requires approval")
+
+
+def _check_node(findings: _Findings, node: ast.AST) -> None:
+    if isinstance(node, ast.Import):
+        for alias in node.names:
+            _check_import(findings, alias.name)
+    elif isinstance(node, ast.ImportFrom):
+        if node.level > 0:
+            findings.deny.append("Denied relative import")
+        elif node.module:
+            _check_import(findings, node.module)
+    elif isinstance(node, ast.Call):
+        _check_call(findings, node)
+    elif isinstance(node, ast.Name):
+        if node.id in DENY_NAMES:
+            findings.deny.append(f"Denied reference to '{node.id}'")
+    elif isinstance(node, ast.Constant):
+        if isinstance(node.value, str) and any(d in node.value for d in DENY_DUNDER_STRINGS):
+            findings.deny.append("Denied dunder string literal")
+    elif isinstance(node, ast.Attribute) and _is_dunder(node.attr) and node.attr not in ALLOWED_DUNDERS:
+        findings.deny.append(f"Denied dunder attribute access: '{node.attr}'")
+
+
 def evaluate_code_policy(code: str) -> PolicyDecision:
-    """Evaluates code safety purely through AST inspection.
-    Never executes code.
-    Returns PolicyDecision with verdict 'allow', 'needs_approval', or 'deny'.
+    """Decide allow / needs_approval / deny for generated code by inspecting its AST.
+
+    Pure function: the code is parsed, never executed. If anything is denied the verdict is
+    deny; otherwise if anything needs a human the verdict is needs_approval; else allow.
     """
     if not code or not code.strip():
         return PolicyDecision(verdict="allow", reasons=[])
@@ -110,85 +203,12 @@ def evaluate_code_policy(code: str) -> PolicyDecision:
     except SyntaxError as e:
         return PolicyDecision(verdict="deny", reasons=[f"Unparseable syntax: {e.msg}"])
 
-    deny_reasons: list[str] = []
-    approval_reasons: list[str] = []
-
+    findings = _Findings()
     for node in ast.walk(tree):
-        # 1. Imports
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                mod_root = alias.name.split(".")[0]
-                if mod_root in DENY_IMPORTS or _is_denied_module(mod_root):
-                    deny_reasons.append(f"Denied import '{alias.name}'")
-                elif mod_root in NEEDS_APPROVAL_IMPORTS:
-                    approval_reasons.append(f"Import requires approval: '{alias.name}'")
-                elif mod_root not in ALLOW_IMPORTS:
-                    approval_reasons.append(f"Unknown import requires approval: '{alias.name}'")
+        _check_node(findings, node)
 
-        elif isinstance(node, ast.ImportFrom):
-            if node.level and node.level > 0:
-                deny_reasons.append("Denied relative import")
-            elif node.module:
-                mod_root = node.module.split(".")[0]
-                if mod_root in DENY_IMPORTS or _is_denied_module(mod_root):
-                    deny_reasons.append(f"Denied import '{node.module}'")
-                elif mod_root in NEEDS_APPROVAL_IMPORTS:
-                    approval_reasons.append(f"Import requires approval: '{node.module}'")
-                elif mod_root not in ALLOW_IMPORTS:
-                    approval_reasons.append(f"Unknown import requires approval: '{node.module}'")
-
-        # 2. Function calls
-        elif isinstance(node, ast.Call):
-            # Direct calls by name
-            if isinstance(node.func, ast.Name):
-                fn_name = node.func.id
-                if fn_name in DENY_CALL_NAMES:
-                    deny_reasons.append(f"Denied call to '{fn_name}()'")
-                elif fn_name == "open":
-                    approval_reasons.append("Call to 'open()' requires approval")
-                elif fn_name == "type" and len(node.args) == 3:
-                    approval_reasons.append("Dynamic class creation via type() requires approval")
-                elif fn_name in {"getattr", "setattr", "delattr", "hasattr"}:
-                    if len(node.args) < 2 or not (
-                        isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)
-                    ):
-                        deny_reasons.append(f"Denied dynamic attribute access via {fn_name}()")
-                    if node.args and isinstance(node.args[0], ast.Name) and node.args[0].id in {"__builtins__", "builtins"}:
-                        deny_reasons.append(f"Denied access to builtins via {fn_name}()")
-                    for arg in node.args:
-                        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                            val = arg.value
-                            if val in DENY_CALL_NAMES:
-                                deny_reasons.append(f"Denied {fn_name} for restricted function '{val}'")
-                            elif val.startswith("__") and val.endswith("__") and val not in ALLOWED_DUNDERS:
-                                deny_reasons.append(
-                                    f"Denied dynamic dunder access via {fn_name}('{val}')"
-                                )
-            elif isinstance(node.func, ast.Attribute):
-                attr_name = node.func.attr
-                if attr_name in DENY_CALL_NAMES:
-                    deny_reasons.append(f"Denied call to '{attr_name}()'")
-                elif attr_name in DENY_ATTR_CALLS:
-                    deny_reasons.append(f"Denied call to '.{attr_name}()'")
-                elif attr_name == "open":
-                    approval_reasons.append("Call to 'open()' requires approval")
-
-        # 3. Attribute access (dunder escapes)
-        elif isinstance(node, ast.Name):
-            if node.id in DENY_NAMES:
-                deny_reasons.append(f"Denied reference to '{node.id}'")
-
-        elif isinstance(node, ast.Constant):
-            if isinstance(node.value, str) and any(d in node.value for d in DENY_DUNDER_STRINGS):
-                deny_reasons.append("Denied dunder string literal")
-
-        elif isinstance(node, ast.Attribute):
-            attr = node.attr
-            if attr.startswith("__") and attr.endswith("__") and attr not in ALLOWED_DUNDERS:
-                deny_reasons.append(f"Denied dunder attribute access: '{attr}'")
-
-    if deny_reasons:
-        return PolicyDecision(verdict="deny", reasons=deny_reasons)
-    if approval_reasons:
-        return PolicyDecision(verdict="needs_approval", reasons=approval_reasons)
+    if findings.deny:
+        return PolicyDecision(verdict="deny", reasons=findings.deny)
+    if findings.approval:
+        return PolicyDecision(verdict="needs_approval", reasons=findings.approval)
     return PolicyDecision(verdict="allow", reasons=[])
