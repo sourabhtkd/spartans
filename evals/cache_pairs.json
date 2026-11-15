@@ -89,5 +89,53 @@
     "q1": "compute sum of elements in list",
     "q2": "calculate sum of elements in list",
     "expect": "hit"
+  },
+  {
+    "id": "pair_14",
+    "expect": "hit",
+    "q1": "check whether a number is prime",
+    "q2": "function to check if a number is prime"
+  },
+  {
+    "id": "pair_15",
+    "expect": "miss",
+    "q1": "convert string to uppercase",
+    "q2": "convert string to lowercase"
+  },
+  {
+    "id": "pair_16",
+    "expect": "miss",
+    "q1": "count positive numbers in list",
+    "q2": "count negative numbers in list"
+  },
+  {
+    "id": "pair_17",
+    "expect": "miss",
+    "q1": "remove duplicates from list",
+    "q2": "find duplicates in list"
+  },
+  {
+    "id": "pair_18",
+    "expect": "miss",
+    "q1": "sum of all even numbers",
+    "q2": "sum of all odd numbers"
+  },
+  {
+    "id": "pair_19",
+    "expect": "miss",
+    "q1": "write it in python",
+    "q2": "write it in java"
+  },
+  {
+    "id": "pair_20",
+    "expect": "hit",
+    "q1": "find the largest number in a list",
+    "q2": "find the maximum number in a list"
+  },
+  {
+    "id": "pair_21",
+    "expect": "miss",
+    "q1": "check if all items are positive",
+    "q2": "check if any item is positive"
   }
 ]

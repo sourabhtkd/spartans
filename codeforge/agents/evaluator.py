@@ -1,8 +1,13 @@
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from codeforge.state import CodeForgeState
+from codeforge.guard.pii import mask_obj
+from codeforge.llm import AllModelsDown, resilient_invoke
+from codeforge.state import CodeForgeState, merge_tier
+
+_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "evaluator.md"
 
 
 class EvaluationCritique(BaseModel):
@@ -12,30 +17,31 @@ class EvaluationCritique(BaseModel):
 
 
 class EvaluatorAgent:
-    """Advisory evaluator agent that critiques implementation and tests without deciding pass/fail."""
+    """Advisory reviewer. Its notes appear in the report but NEVER change pass/fail:
+    status comes only from the real pytest exit code."""
+
+    def __init__(self) -> None:
+        self.system_prompt = _PROMPT_PATH.read_text(encoding="utf-8")
 
     def __call__(self, state: CodeForgeState) -> dict[str, Any]:
         events = list(state.get("events", []))
-        code = state.get("code", "")
-        tests = state.get("tests", "")
         reqs = state.get("requirements")
-
-        notes: list[str] = []
-        if reqs and reqs.edge_cases:
-            notes.append(f"Reviewed {len(reqs.edge_cases)} declared edge cases.")
-        if "def " in code:
-            notes.append("Function structure defined cleanly.")
-        if tests:
-            notes.append("Unit tests generated and present.")
-
-        critique = EvaluationCritique(
-            clarity_score=0.95,
-            advisory_notes=notes,
-            suggestions=["Ensure strict time complexity bounds if large input sizes are anticipated."],
+        user = (
+            f"Requirements:\n{reqs.model_dump_json(indent=2) if reqs else '(none)'}\n\n"
+            f"Code:\n```python\n{state.get('code', '')}\n```\n\n"
+            f"Tests:\n```python\n{state.get('tests', '')}\n```\n"
         )
-
-        events.append({
-            "stage": "evaluator_advisory",
-            "critique": critique.model_dump(),
-        })
-        return {"events": events}
+        messages = [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": user}]
+        try:
+            critique, tier = resilient_invoke("evaluator", messages, EvaluationCritique)
+            source = "model"
+            events.append({"stage": "evaluator_advisory", "source": source, "critique": mask_obj(critique.model_dump())})
+            return {"events": events, "served_tier": merge_tier(state.get("served_tier"), tier)}
+        except AllModelsDown:
+            # No model available: say so plainly instead of inventing a review.
+            critique = EvaluationCritique(
+                clarity_score=0.0,
+                advisory_notes=["Automated review unavailable (model unreachable); results above come from the real test run."],
+            )
+            events.append({"stage": "evaluator_advisory", "source": "unavailable", "critique": critique.model_dump()})
+            return {"events": events}

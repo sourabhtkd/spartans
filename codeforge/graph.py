@@ -6,6 +6,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
 from codeforge.agents.codegen import CodeGenAgent
+from codeforge.agents.evaluator import EvaluatorAgent
 from codeforge.agents.requirements import RequirementsAgent
 from codeforge.agents.router import RouterAgent
 from codeforge.agents.test_validator import TestValidator
@@ -45,6 +46,19 @@ def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
             "events": [{"stage": "quota_check", "status": "exceeded"}],
         }
 
+    # Compact long history (masked) before any agent sees it.
+    history = state.get("history") or []
+    compaction_cfg = get_settings().compaction
+    if len(history) > int(compaction_cfg.get("max_turns", 6)):
+        from codeforge.cost.compaction import compact_history, llm_summarize
+
+        history = compact_history(
+            history,
+            max_turns=int(compaction_cfg.get("max_turns", 6)),
+            keep_last=int(compaction_cfg.get("keep_last", 4)),
+            summarizer=llm_summarize,
+        )
+
     # Pre-check explicit human request escalation
     should_esc, reason, prio = should_escalate(masked_req)
     ticket = None
@@ -57,6 +71,7 @@ def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
 
     return {
         "raw_request_masked": masked_req,
+        "history": history,
         "identity": identity,
         "ticket": ticket,
         "attempts": state.get("attempts", 0),
@@ -71,7 +86,11 @@ def cache_lookup(state: CodeForgeState) -> dict[str, Any]:
         from codeforge.cost.semantic_cache import get_semantic_cache
 
         cache = get_semantic_cache()
-        entry = cache.lookup(state.get("raw_request_masked", ""))
+        entry = cache.lookup(
+            state.get("raw_request_masked", ""),
+            context_free=not state.get("history"),
+            role=current_identity().role,
+        )
         if entry:
             return {
                 "code": entry["code"],
@@ -165,14 +184,21 @@ def cache_store_node(state: CodeForgeState) -> dict[str, Any]:
             from codeforge.cost.semantic_cache import get_semantic_cache
 
             cache = get_semantic_cache()
-            cache.store(
-                request_text=state.get("raw_request_masked", ""),
-                code=state.get("code", ""),
-                tests=state.get("tests", ""),
-            )
+            if not state.get("history"):  # only context-free requests are cacheable
+                cache.store(
+                    request_text=state.get("raw_request_masked", ""),
+                    code=state.get("code", ""),
+                    tests=state.get("tests", ""),
+                    role=current_identity().role,
+                )
         except Exception as e:  # noqa: BLE001
             logger.debug("cache_store_error", error=str(e))
     return {}
+
+
+def evaluator_node(state: CodeForgeState) -> dict[str, Any]:
+    """Advisory review after a passing run; never affects pass/fail."""
+    return EvaluatorAgent()(state)
 
 
 def escalate_check_node(state: CodeForgeState) -> dict[str, Any]:
@@ -288,11 +314,11 @@ def route_after_approval(
 
 def route_after_sandbox(
     state: CodeForgeState,
-) -> Literal["cache_store", "codegen", "escalate_check"]:
+) -> Literal["evaluator", "codegen", "escalate_check"]:
     res = state.get("run_result")
     attempts = state.get("attempts", 0)
     if res and res.exit_code == 0 and not res.timed_out:
-        return "cache_store"
+        return "evaluator"
     if attempts < 2:
         return "codegen"
     return "escalate_check"
@@ -329,6 +355,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     graph.add_node("refuse", refuse_node)
     graph.add_node("human_approval", human_approval_node)
     graph.add_node("sandbox_run", sandbox_run_node)
+    graph.add_node("evaluator", evaluator_node)
     graph.add_node("cache_store", cache_store_node)
     graph.add_node("escalate_check", escalate_check_node)
     graph.add_node("report", report_node)
@@ -346,6 +373,7 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     graph.add_edge("refuse", "escalate_check")
     graph.add_conditional_edges("human_approval", route_after_approval)
     graph.add_conditional_edges("sandbox_run", route_after_sandbox)
+    graph.add_edge("evaluator", "cache_store")
     graph.add_edge("cache_store", "escalate_check")
     graph.add_edge("escalate_check", "report")
     graph.add_edge("report", END)

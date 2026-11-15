@@ -9,8 +9,17 @@ def _isolated_storage(tmp_path, monkeypatch):
     import codeforge.cost.semantic_cache as sc
 
     monkeypatch.setattr(sc, "_semantic_cache", None)
+    monkeypatch.setenv("CODEFORGE_EMBEDDINGS", "hash")  # fast & offline; model-backed test opts out
+    # Never let tests reach a real provider, even if a dev has keys in .env.
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    monkeypatch.setenv("FALLBACK_API_KEY", "")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
     from codeforge.config import clear_settings_cache
+    from codeforge.llm import clear_llm_cache, reset_breakers
 
+    clear_llm_cache()
+    reset_breakers()
     clear_settings_cache()
     yield
     clear_settings_cache()

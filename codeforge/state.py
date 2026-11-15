@@ -48,6 +48,10 @@ class RunResult(BaseModel):
     isolation: str = ""
 
 
+class HistorySummary(BaseModel):
+    summary: str
+
+
 class ApprovalDecision(BaseModel):
     approved: bool
     approver_id: str

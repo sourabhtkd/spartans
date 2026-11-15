@@ -65,7 +65,15 @@ def render_report(state: CodeForgeState) -> str:
     run_result = state.get("run_result")
     ticket = state.get("ticket")
 
+    notes: list[str] = []
+    for ev in state.get("events", []):
+        if ev.get("stage") == "evaluator_advisory":
+            notes = list(ev.get("critique", {}).get("advisory_notes", [])) + list(
+                ev.get("critique", {}).get("suggestions", [])
+            )
+
     return template.render(
+        reviewer_notes=notes,
         status_message=status_msg,
         code=state.get("code"),
         tests=state.get("tests"),

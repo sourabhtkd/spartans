@@ -155,3 +155,50 @@ def test_second_policy_denial_opens_ticket(monkeypatch):
     second = submit("delete all my files now", thread_id="d2", graph=g)
     assert second.values["ticket"] is not None
     assert "Repeated policy denials" in second.values["ticket"].reason
+
+
+def _happy_fake(monkeypatch):
+    fake = FakeLLM()
+    fake.set_response("router", RouteDecision(kind="python_function"))
+    fake.set_response("requirements", Requirements(function_name="f"))
+    fake.set_response("codegen", GeneratedCode(code="def f(x):\n    return x + 1\n"))
+    fake.set_response("testgen", GeneratedTests(tests=GOOD_TESTS))
+    _patch(monkeypatch, fake)
+    return fake
+
+
+def test_evaluator_is_advisory_and_never_changes_status(monkeypatch):
+    from codeforge.agents.evaluator import EvaluationCritique
+
+    _happy_fake(monkeypatch)
+    monkeypatch.setattr(
+        "codeforge.agents.evaluator.resilient_invoke",
+        lambda agent, messages, schema: (
+            EvaluationCritique(clarity_score=0.0, advisory_notes=["This looks wrong!"]),
+            "primary",
+        ),
+    )
+    res = submit("Write f", graph=_graph())
+    assert "✅ Tests passed" in res.values["report"]  # status comes only from pytest
+    assert "This looks wrong!" in res.values["report"]
+    assert any(e["stage"] == "evaluator_advisory" for e in res.values["events"])
+
+
+def test_evaluator_without_model_says_unavailable(monkeypatch):
+    _happy_fake(monkeypatch)
+    res = submit("Write f", graph=_graph())
+    ev = next(e for e in res.values["events"] if e["stage"] == "evaluator_advisory")
+    assert ev["source"] == "unavailable"
+    assert "unavailable" in res.values["report"]
+
+
+def test_long_history_is_compacted_masked_and_skips_cache(monkeypatch):
+    fake = _happy_fake(monkeypatch)
+    history = [{"role": "user", "content": f"turn {i} key sk-abcdefghijklmnop1234"} for i in range(10)]
+    res = submit("Write f", graph=_graph(), history=history)
+    h = res.values["history"]
+    assert len(h) == 5 and h[0]["role"] == "system"
+    assert "Previous context summary" in h[0]["content"] and "sk-" not in h[0]["content"]
+    assert res.values.get("cache_hit") is False
+    req_msgs = next(i for i in fake.invocations if i["agent"] == "requirements")["messages"]
+    assert "Conversation so far" in req_msgs[-1]["content"]

@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any, Literal
 
+from codeforge.agents.context import request_with_context
 from codeforge.llm import AllModelsDown, resilient_invoke
 from codeforge.state import CodeForgeState, RouteDecision, merge_tier
 
@@ -15,7 +16,7 @@ class RouterAgent:
         req_text = state.get("raw_request_masked", "")
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": req_text},
+            {"role": "user", "content": request_with_context(state)},
         ]
         try:
             decision, tier = resilient_invoke("router", messages, RouteDecision)

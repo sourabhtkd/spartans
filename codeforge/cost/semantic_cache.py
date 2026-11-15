@@ -1,5 +1,18 @@
+"""Guarded semantic cache (R4).
+
+A cached answer is reused only when ALL of these hold:
+  * the request is context-free (no chat history),
+  * role and policy version match (a cache hit must never cross a trust boundary),
+  * the answer-changing "guard" tokens are IDENTICAL (ascending/descending, min/max, numbers, ...),
+  * embedding cosine similarity >= threshold,
+  * the entry is younger than the TTL.
+A hit still goes through the test validator, policy gate and sandbox in the graph.
+"""
+import hashlib
 import json
+import os
 import re
+import zlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -7,151 +20,177 @@ import numpy as np
 from sqlalchemy.orm import Session, sessionmaker
 
 from codeforge.config import get_settings
+from codeforge.observability import get_logger
+from codeforge.policy.code_policy import POLICY_VERSION
 from codeforge.store.db import CacheEntry, init_db
 
-GUARD_KEYWORDS = {
-    "ascending",
-    "descending",
-    "min",
-    "max",
-    "first",
-    "last",
-    "even",
-    "odd",
-    "recursive",
-    "iterative",
-    "inclusive",
-    "exclusive",
-    "case-sensitive",
-    "case-insensitive",
-    "not",
-    "without",
-    "python",
-    "sql",
-    "java",
-    "rust",
-    "go",
+logger = get_logger("semantic_cache")
+
+# canonical guard token -> regex. Two requests may share a cache entry only if they
+# trigger exactly the same set of these (plus the same numbers).
+GUARD_PATTERNS: dict[str, str] = {
+    "ascending": r"ascending|increasing",
+    "descending": r"descending|decreasing",
+    "min": r"min|minimum|smallest|lowest",
+    "max": r"max|maximum|largest|biggest|greatest|highest",
+    "first": r"first",
+    "last": r"last",
+    "even": r"even",
+    "odd": r"odd",
+    "recursive": r"recursive|recursion|recursively",
+    "iterative": r"iterative|iteratively|iteration",
+    "inclusive": r"inclusive",
+    "exclusive": r"exclusive",
+    "case-sensitive": r"case[- ]?sensitive",
+    "case-insensitive": r"case[- ]?insensitive|ignor\w* case",
+    "not": r"not|without|except|excluding|never",
+    "remove": r"remove|delete|drop",
+    "find": r"find|search|locate",
+    "count": r"count|number of",
+    "sum": r"sum|total",
+    "product": r"product",
+    "average": r"average|mean",
+    "median": r"median",
+    "reverse": r"reverse|backwards?",
+    "upper": r"upper|uppercase|capitali[sz]e",
+    "lower": r"lower|lowercase",
+    "positive": r"positive",
+    "negative": r"negative",
+    "zero": r"zero",
+    "empty": r"empty",
+    "unique": r"unique|distinct",
+    "duplicate": r"duplicates?|repeated",
+    "all": r"all",
+    "any": r"any",
+    "sort": r"sort|sorted|sorting",
+    "python": r"python",
+    "sql": r"sql",
+    "java": r"java",
+    "javascript": r"javascript|js",
+    "rust": r"rust",
+    "go": r"go|golang",
+    "c++": r"c\+\+",
+    "typescript": r"typescript",
 }
+_COMPILED = {k: re.compile(rf"(?<![\w+]){v}(?![\w+])") for k, v in GUARD_PATTERNS.items()}
 
 
 def extract_guard_tokens(text: str) -> set[str]:
-    """Extracts answer-altering guard tokens and all numbers from text."""
+    """Answer-altering guard tokens (canonicalised) plus every number in the text."""
     lowered = text.lower()
-    tokens = set()
-    for kw in GUARD_KEYWORDS:
-        if re.search(rf"\b{re.escape(kw)}\b", lowered):
-            tokens.add(kw)
-    # Extract numbers
-    for num in re.findall(r"\b\d+\b", lowered):
-        tokens.add(num)
+    tokens = {k for k, rx in _COMPILED.items() if rx.search(lowered)}
+    tokens.update(re.findall(r"\b\d+\b", lowered))
     return tokens
 
 
+def normalize_request(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().lower())
+
+
+def make_cache_key(text: str, role: str, policy_version: str = POLICY_VERSION) -> str:
+    """Stable across processes (no Python hash())."""
+    return hashlib.sha256(f"{normalize_request(text)}\x00{role}\x00{policy_version}".encode()).hexdigest()[:32]
+
+
 _model: Any = None
+_warned_fallback = False
 
 
 def _get_embedding_model() -> Any:
-    global _model
+    """Sentence-transformer model, or False if unavailable / disabled (CODEFORGE_EMBEDDINGS=hash)."""
+    global _model, _warned_fallback
     if _model is None:
-        try:
-            from sentence_transformers import SentenceTransformer
-
-            _model = SentenceTransformer("all-MiniLM-L6-v2")
-        except Exception:  # noqa: BLE001
+        if os.environ.get("CODEFORGE_EMBEDDINGS") == "hash":
             _model = False
+        else:
+            try:
+                from sentence_transformers import SentenceTransformer
+
+                _model = SentenceTransformer("all-MiniLM-L6-v2")
+            except Exception as exc:  # noqa: BLE001
+                _model = False
+                if not _warned_fallback:
+                    _warned_fallback = True
+                    logger.warning("embedding_model_unavailable_using_hash_fallback", error=str(exc))
     return _model
 
 
 def _compute_embedding(text: str) -> list[float]:
-    """Computes a normalized embedding vector for semantic matching."""
+    """Normalised embedding. Fallback is a stable hashed bag-of-words (zlib.crc32)."""
     model = _get_embedding_model()
     if model:
-        vec = model.encode(text)
-        norm = np.linalg.norm(vec)
-        if norm > 0:
-            vec = vec / norm
-        return vec.tolist()
-
-    # Fallback bag-of-words
-    words = re.findall(r"\w+", text.lower())
-    dim = 128
-    v = np.zeros(dim, dtype=np.float32)
-    for w in words:
-        v[hash(w) % dim] += 1.0
-    norm = np.linalg.norm(v)
+        vec = np.asarray(model.encode(text), dtype=np.float32)
+    else:
+        vec = np.zeros(256, dtype=np.float32)
+        for w in re.findall(r"\w+", text.lower()):
+            vec[zlib.crc32(w.encode()) % 256] += 1.0
+    norm = float(np.linalg.norm(vec))
     if norm > 0:
-        v = v / norm
-    return v.tolist()
+        vec = vec / norm
+    return [float(x) for x in vec]
+
+
+def cache_enabled() -> bool:
+    return os.environ.get("CODEFORGE_CACHE_ENABLED", "1") != "0"
 
 
 class SemanticCache:
-    """Guarded semantic cache.
-    Ensures zero false hits by enforcing strict equality of answer-changing guard tokens
-    and cosine similarity above threshold (e.g. >= 0.92).
-    """
-
-    def __init__(self, session_factory: sessionmaker[Session] | None = None) -> None:
+    def __init__(self, session_factory: "sessionmaker[Session] | None" = None) -> None:
         self.session_factory = session_factory or init_db()
 
-    def lookup(self, request_text: str, context_free: bool = True) -> dict[str, Any] | None:
-        if not context_free:
+    def lookup(
+        self, request_text: str, context_free: bool = True, role: str = "student"
+    ) -> dict[str, Any] | None:
+        if not context_free or not cache_enabled():
             return None
-
+        cfg = get_settings().cache
+        threshold = float(cfg.get("threshold", 0.92))
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=float(cfg.get("ttl_hours", 24)))
         target_guard = extract_guard_tokens(request_text)
-        target_emb = np.array(_compute_embedding(request_text), dtype=np.float32)
-        settings = get_settings()
-        threshold = settings.cache.get("threshold", 0.90)
-        ttl_hours = settings.cache.get("ttl_hours", 24)
-        cutoff = datetime.now(UTC) - timedelta(hours=ttl_hours)
+        target_emb = np.asarray(_compute_embedding(request_text), dtype=np.float32)
 
         with self.session_factory() as session:
-            entries = session.query(CacheEntry).filter(CacheEntry.created_at >= cutoff).all()
+            entries = (
+                session.query(CacheEntry)
+                .filter(
+                    CacheEntry.created_at >= cutoff,
+                    CacheEntry.role == role,
+                    CacheEntry.policy_version == POLICY_VERSION,
+                )
+                .all()
+            )
             for entry in entries:
-                cand_guard = set(json.loads(entry.guard_tokens))
-                # Guard word check: must be strictly equal
-                if cand_guard != target_guard:
+                if set(json.loads(str(entry.guard_tokens))) != target_guard:
                     continue
-
-                cand_emb = np.array(json.loads(entry.embedding_json), dtype=np.float32)
-                sim = float(np.dot(target_emb, cand_emb))
+                cand = np.asarray(json.loads(str(entry.embedding_json)), dtype=np.float32)
+                if cand.shape != target_emb.shape:
+                    continue  # embedded with a different backend
+                sim = float(np.dot(target_emb, cand))
                 if sim >= threshold:
-                    return {
-                        "code": entry.code,
-                        "tests": entry.tests,
-                        "similarity": sim,
-                    }
+                    return {"code": entry.code, "tests": entry.tests, "similarity": sim}
         return None
 
-    def store(
-        self,
-        request_text: str,
-        code: str,
-        tests: str,
-        role: str = "student",
-    ) -> None:
-        guard_tokens = list(extract_guard_tokens(request_text))
-        emb = _compute_embedding(request_text)
-        cache_key = f"c_{hash(request_text) & 0xffffffff:x}"
-
+    def store(self, request_text: str, code: str, tests: str, role: str = "student") -> None:
+        if not cache_enabled():
+            return
+        key = make_cache_key(request_text, role)
+        values = {
+            "request_text": request_text,
+            "embedding_json": json.dumps(_compute_embedding(request_text)),
+            "guard_tokens": json.dumps(sorted(extract_guard_tokens(request_text))),
+            "code": code,
+            "tests": tests,
+            "role": role,
+            "policy_version": POLICY_VERSION,
+            "created_at": datetime.now(UTC),
+        }
         with self.session_factory() as session:
-            existing = session.query(CacheEntry).filter(CacheEntry.cache_key == cache_key).first()
+            existing = session.get(CacheEntry, key)
             if existing:
-                existing.code = code
-                existing.tests = tests
-                existing.embedding_json = json.dumps(emb)
-                existing.guard_tokens = json.dumps(guard_tokens)
-                existing.created_at = datetime.now(UTC)
+                for k, v in values.items():
+                    setattr(existing, k, v)
             else:
-                entry = CacheEntry(
-                    cache_key=cache_key,
-                    request_text=request_text,
-                    embedding_json=json.dumps(emb),
-                    guard_tokens=json.dumps(guard_tokens),
-                    code=code,
-                    tests=tests,
-                    role=role,
-                )
-                session.add(entry)
+                session.add(CacheEntry(cache_key=key, **values))
             session.commit()
 
 

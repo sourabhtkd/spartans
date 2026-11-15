@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any
 
+from codeforge.agents.context import request_with_context
 from codeforge.llm import AllModelsDown, resilient_invoke
 from codeforge.state import CodeForgeState, Requirements, merge_tier
 
@@ -15,7 +16,7 @@ class RequirementsAgent:
         req_text = state.get("raw_request_masked", "")
         messages = [
             {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": req_text},
+            {"role": "user", "content": request_with_context(state)},
         ]
         try:
             requirements, tier = resilient_invoke("requirements", messages, Requirements)

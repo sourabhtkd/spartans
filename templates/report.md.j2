@@ -44,3 +44,8 @@
 {{ stdout }}
 ```
 {% endif %}
+
+{% if reviewer_notes %}
+### Reviewer Notes (advisory, does not affect the result)
+{% for n in reviewer_notes %}- {{ n }}
+{% endfor %}{% endif %}
