@@ -45,6 +45,7 @@ class RunResult(BaseModel):
     stdout: str = ""
     last_failing_test: str | None = None
     cached: bool = False
+    isolation: str = ""
 
 
 class ApprovalDecision(BaseModel):

@@ -1,0 +1,5 @@
+# Optional hardened sandbox image: SANDBOX_BACKEND=docker SANDBOX_DOCKER_IMAGE=codeforge-sandbox
+FROM python:3.11-slim
+RUN pip install --no-cache-dir pytest
+RUN useradd -m sandbox
+USER sandbox
