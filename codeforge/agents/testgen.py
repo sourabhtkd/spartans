@@ -1,38 +1,27 @@
-from pathlib import Path
+"""TestGen agent: writes pytest tests for the requirements."""
 from typing import Any
 
-from codeforge.agents.context import load_prompt
+from codeforge.agents.base import BaseAgent
 from codeforge.llm import AllModelsDown, resilient_invoke
-from codeforge.state import CodeForgeState, GeneratedTests, worst_tier
+from codeforge.resilience.templates import match_template
+from codeforge.state import CodeForgeState, GeneratedTests
 
-_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "testgen.md"
 
-
-class TestGenAgent:
-    __test__ = False
-
-    def __init__(self) -> None:
-        self.system_prompt = load_prompt("testgen")
+class TestGenAgent(BaseAgent):
+    __test__ = False  # not a pytest test class, despite the name
+    name = "testgen"
 
     def __call__(self, state: CodeForgeState) -> dict[str, Any]:
-        reqs = state.get("requirements")
-        fn_name = reqs.function_name if reqs else "solve"
-        user_content = (
-            f"Requirements:\n{reqs.model_dump_json(indent=2) if reqs else 'Write tests'}\n"
-            f"Ensure tests import: from solution import {fn_name}\n"
-        )
-        messages = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": user_content},
-        ]
-        try:
-            generated, tier = resilient_invoke("testgen", messages, GeneratedTests)
-            return {"tests": generated.tests, "served_by": worst_tier(state.get("served_by"), tier)}
-        except AllModelsDown:
-            from codeforge.resilience.templates import match_template
+        requirements = state.get("requirements")
+        function_name = requirements.function_name if requirements else "solve"
+        spec = requirements.model_dump_json(indent=2) if requirements else "Write tests"
+        user_content = f"Requirements:\n{spec}\nEnsure tests import: from solution import {function_name}\n"
 
-            search_text = f"{fn_name} {state.get('request_masked', '')}"
-            tpl = match_template(search_text)
-            if tpl:
-                return {"tests": tpl.tests, "served_by": worst_tier(state.get("served_by"), "template")}
-            return {"tests": "", "served_by": worst_tier(state.get("served_by"), "refused")}
+        try:
+            generated, tier = resilient_invoke(self.name, self.messages(user_content), GeneratedTests)
+            return {"tests": generated.tests, "served_by": self.served_by(state, tier)}
+        except AllModelsDown:
+            template = match_template(f"{function_name} {state.get('request_masked', '')}")
+            if template:
+                return {"tests": template.tests, "served_by": self.served_by(state, "template")}
+            return {"tests": "", "served_by": self.served_by(state, "refused")}

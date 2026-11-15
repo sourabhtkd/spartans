@@ -1,14 +1,12 @@
-from pathlib import Path
+"""Evaluator agent: an advisory second opinion on the generated code (never decides pass/fail)."""
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from codeforge.agents.context import load_prompt
+from codeforge.agents.base import BaseAgent
 from codeforge.llm import AllModelsDown, resilient_invoke
 from codeforge.privacy.pii import mask_obj
-from codeforge.state import CodeForgeState, worst_tier
-
-_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "evaluator.md"
+from codeforge.state import CodeForgeState
 
 
 class EvaluationCritique(BaseModel):
@@ -17,12 +15,11 @@ class EvaluationCritique(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
 
 
-class EvaluatorAgent:
+class EvaluatorAgent(BaseAgent):
     """Advisory reviewer. Its notes appear in the report but NEVER change pass/fail:
     status comes only from the real pytest exit code."""
 
-    def __init__(self) -> None:
-        self.system_prompt = load_prompt("evaluator")
+    name = "evaluator"
 
     def __call__(self, state: CodeForgeState) -> dict[str, Any]:
         events = list(state.get("events", []))
@@ -32,12 +29,12 @@ class EvaluatorAgent:
             f"Code:\n```python\n{state.get('code', '')}\n```\n\n"
             f"Tests:\n```python\n{state.get('tests', '')}\n```\n"
         )
-        messages = [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": user}]
         try:
-            critique, tier = resilient_invoke("evaluator", messages, EvaluationCritique)
-            source = "model"
-            events.append({"stage": "evaluator_advisory", "source": source, "critique": mask_obj(critique.model_dump())})
-            return {"events": events, "served_by": worst_tier(state.get("served_by"), tier)}
+            critique, tier = resilient_invoke(self.name, self.messages(user), EvaluationCritique)
+            events.append(
+                {"stage": "evaluator_advisory", "source": "model", "critique": mask_obj(critique.model_dump())}
+            )
+            return {"events": events, "served_by": self.served_by(state, tier)}
         except AllModelsDown:
             # No model available: say so plainly instead of inventing a review.
             critique = EvaluationCritique(

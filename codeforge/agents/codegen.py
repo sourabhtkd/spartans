@@ -1,57 +1,42 @@
-from pathlib import Path
+"""CodeGen agent: writes the solution from the requirements, and repairs it when tests fail."""
 from typing import Any
 
-from codeforge.agents.context import load_prompt
+from codeforge.agents.base import BaseAgent
 from codeforge.llm import AllModelsDown, resilient_invoke
-from codeforge.state import CodeForgeState, GeneratedCode, worst_tier
+from codeforge.resilience.templates import match_template
+from codeforge.state import CodeForgeState, GeneratedCode
 
-_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "codegen.md"
+
+def repair_instructions(state: CodeForgeState, attempts: int) -> str:
+    """Extra prompt text for a repair attempt: the previous code and why its tests failed."""
+    run_result = state.get("run_result")
+    failure = (run_result.last_failing_test or run_result.stdout) if run_result else ""
+    return (
+        f"\nREPAIR ATTEMPT #{attempts + 1}:\n"
+        f"Previous Code:\n```python\n{state.get('code', '')}\n```\n"
+        f"Failing Test / Error:\n{failure or 'Assertion failed'}\n"
+        "Please fix the implementation to satisfy all test cases.\n"
+    )
 
 
-class CodeGenAgent:
-    def __init__(self) -> None:
-        self.system_prompt = load_prompt("codegen")
+class CodeGenAgent(BaseAgent):
+    name = "codegen"
 
     def __call__(self, state: CodeForgeState) -> dict[str, Any]:
-        reqs = state.get("requirements")
+        requirements = state.get("requirements")
         attempts = state.get("attempts", 0)
-        previous_code = state.get("code", "")
-        run_result = state.get("run_result")
-        last_failing_test = run_result.last_failing_test if run_result else None
 
-        user_content = f"Requirements:\n{reqs.model_dump_json(indent=2) if reqs else 'Implement requested function'}\n"
-        if attempts > 0 and previous_code:
-            user_content += (
-                f"\nREPAIR ATTEMPT #{attempts + 1}:\n"
-                f"Previous Code:\n```python\n{previous_code}\n```\n"
-                f"Failing Test / Error:\n{last_failing_test or (run_result.stdout if run_result else '') or 'Assertion failed'}\n"
-                "Please fix the implementation to satisfy all test cases.\n"
-            )
+        spec = requirements.model_dump_json(indent=2) if requirements else "Implement requested function"
+        user_content = f"Requirements:\n{spec}\n"
+        if attempts > 0 and state.get("code"):
+            user_content += repair_instructions(state, attempts)
 
-        messages = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": user_content},
-        ]
         try:
-            generated, tier = resilient_invoke("codegen", messages, GeneratedCode)
-            return {
-                "code": generated.code,
-                "attempts": attempts + 1,
-                "served_by": worst_tier(state.get("served_by"), tier),
-            }
+            generated, tier = resilient_invoke(self.name, self.messages(user_content), GeneratedCode)
+            return {"code": generated.code, "attempts": attempts + 1, "served_by": self.served_by(state, tier)}
         except AllModelsDown:
-            from codeforge.resilience.templates import match_template
-
-            search_text = f"{reqs.function_name if reqs else ''} {state.get('request_masked', '')}"
-            tpl = match_template(search_text)
-            if tpl:
-                return {
-                    "code": tpl.code,
-                    "attempts": attempts + 1,
-                    "served_by": worst_tier(state.get("served_by"), "template"),
-                }
-            return {
-                "code": "",
-                "attempts": attempts + 1,
-                "served_by": worst_tier(state.get("served_by"), "refused"),
-            }
+            function_name = requirements.function_name if requirements else ""
+            template = match_template(f"{function_name} {state.get('request_masked', '')}")
+            if template:
+                return {"code": template.code, "attempts": attempts + 1, "served_by": self.served_by(state, "template")}
+            return {"code": "", "attempts": attempts + 1, "served_by": self.served_by(state, "refused")}
