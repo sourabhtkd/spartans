@@ -109,14 +109,9 @@ class PolicyDenial(Base):
 
 
 def _default_db_url() -> str:
-    import os
-
     from codeforge.config import get_settings
 
-    env_url = os.environ.get("CODEFORGE_DB_URL")
-    if env_url:
-        return env_url
-    return str(get_settings().storage.get("db_url", "sqlite:///codeforge.db"))
+    return get_settings().db_url
 
 
 def _enable_wal(dbapi_conn: Any, _record: Any) -> None:

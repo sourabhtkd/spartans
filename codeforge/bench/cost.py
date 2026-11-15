@@ -17,7 +17,7 @@ from unittest.mock import patch
 from sqlalchemy import func
 
 from codeforge.bench.chaos import isolated_run
-from codeforge.config import get_settings
+from codeforge.config import clear_settings_cache, get_settings
 from codeforge.entrypoint import submit
 from codeforge.pipeline import build_graph
 from codeforge.sandbox.runner import run_pytest_sandboxed
@@ -107,12 +107,14 @@ def run_mode(mode: str, script: list[dict[str, str]], offline: bool) -> ModeResu
     assert mode in {"baseline", "optimized"}
     result = ModeResult(mode=mode)
     with isolated_run(rate=0.0, outage=False, seed=7, offline=offline, fast=True):
-        agent_tiers = get_settings().agent_tiers
-        tier_overrides = {agent: "large" for agent in agent_tiers} if mode == "baseline" else {}
         cache_flag = "0" if mode == "baseline" else "1"
         # patch.dict restores the original environment / tier mapping when the block exits.
-        with patch.dict(os.environ, {"CODEFORGE_CACHE_ENABLED": cache_flag}), patch.dict(agent_tiers, tier_overrides):
-            _run_script(result, script, mode)
+        with patch.dict(os.environ, {"CODEFORGE_CACHE_ENABLED": cache_flag}):
+            clear_settings_cache()  # settings read the environment once; reload with the new flag
+            agent_tiers = get_settings().agent_tiers
+            tier_overrides = {agent: "large" for agent in agent_tiers} if mode == "baseline" else {}
+            with patch.dict(agent_tiers, tier_overrides):
+                _run_script(result, script, mode)
         result.per_agent = _read_agent_metrics(mode)
     return result
 

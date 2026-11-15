@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from codeforge.agents.history import compact_history
+from codeforge.config import clear_settings_cache
 from codeforge.cost.semantic_cache import SemanticCache, extract_guard_tokens
 from codeforge.store.db import init_db
 
@@ -42,6 +43,7 @@ def test_semantic_cache_pairs_zero_false_hits(backend, monkeypatch):
     import codeforge.cost.semantic_cache as sc
 
     monkeypatch.setenv("CODEFORGE_EMBEDDINGS", backend)
+    clear_settings_cache()
     monkeypatch.setattr(sc, "_model", None)
     if backend == "model" and not sc._get_embedding_model():
         pytest.skip("embedding model unavailable")
@@ -77,6 +79,7 @@ def test_cache_requires_context_free_and_respects_ttl_and_toggle(monkeypatch):
     assert cache.lookup("write a palindrome checker") is None  # expired (TTL 24h)
     cache.store("write a palindrome checker", "code", "tests")
     monkeypatch.setenv("CODEFORGE_CACHE_ENABLED", "0")
+    clear_settings_cache()
     assert cache.lookup("write a palindrome checker") is None
 
 

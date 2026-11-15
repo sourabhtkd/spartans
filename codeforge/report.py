@@ -44,7 +44,7 @@ def determine_status_message(state: CodeForgeState) -> str:
         return "ℹ️ Execution not run."
 
     if run_result.timed_out:
-        timeout_s = get_settings().sandbox.get("timeout_s", 10)
+        timeout_s = get_settings().sandbox.timeout_s
         return f"⏱ Tests did not finish within {timeout_s}s and were killed."
 
     if run_result.exit_code is None:

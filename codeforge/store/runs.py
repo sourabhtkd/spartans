@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from codeforge.config import Identity, current_identity, get_settings
+from codeforge.config import Identity, QuotaConfig, current_identity, get_settings
 from codeforge.state import RunResult
 from codeforge.store.db import PolicyDenial, Run, init_db
 
@@ -68,8 +68,7 @@ class RunStore:
         """Verifies that the current user has not exceeded their hourly quota."""
         identity = self._get_identity()
         settings = get_settings()
-        role_quotas = settings.quotas.get(identity.role, {})
-        limit = role_quotas.get("runs_per_hour", 20)
+        limit = settings.quotas.get(identity.role, QuotaConfig()).runs_per_hour
 
         one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
         with self.session_factory() as session:

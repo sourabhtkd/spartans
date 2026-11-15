@@ -32,10 +32,9 @@ logger = get_logger("nodes")
 def _compacted_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Shorten long (already masked) chat history before any agent sees it."""
     cfg = get_settings().compaction
-    max_turns = int(cfg.get("max_turns", 6))
-    if len(history) <= max_turns:
+    if len(history) <= cfg.max_turns:
         return history
-    return compact_history(history, max_turns, int(cfg.get("keep_last", 4)), summarizer=llm_summarize)
+    return compact_history(history, cfg.max_turns, cfg.keep_last, summarizer=llm_summarize)
 
 
 def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
@@ -143,7 +142,7 @@ def sandbox_run_node(state: CodeForgeState) -> dict[str, Any]:
     code = state.get("code", "")
     tests = state.get("tests", "")
     idem_key = compute_idempotency_key(identity.user_id, code, tests)
-    timeout_s = get_settings().sandbox.get("timeout_s", 10)
+    timeout_s = get_settings().sandbox.timeout_s
 
     store = RunStore(identity_provider=lambda: identity)
     cached_result = store.get_by_idem_key(idem_key)

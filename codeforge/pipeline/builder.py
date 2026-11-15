@@ -1,5 +1,4 @@
 """Builds the LangGraph state machine. Read EDGES top to bottom to follow a request."""
-import os
 import sqlite3
 from typing import Any
 
@@ -59,9 +58,7 @@ _checkpointers: dict[str, SqliteSaver] = {}
 
 def shared_checkpointer() -> SqliteSaver:
     """One SqliteSaver per checkpoint file (env CODEFORGE_CHECKPOINT_PATH, else config)."""
-    path = os.environ.get("CODEFORGE_CHECKPOINT_PATH") or str(
-        get_settings().storage.get("checkpoint_path", "checkpoints.db")
-    )
+    path = get_settings().checkpoint_path
     if path not in _checkpointers:
         connection = sqlite3.connect(path, check_same_thread=False)
         connection.execute("PRAGMA journal_mode=WAL")

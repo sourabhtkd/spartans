@@ -10,7 +10,6 @@ A hit still goes through the test validator, policy gate and sandbox in the grap
 """
 import hashlib
 import json
-import os
 import re
 import zlib
 from datetime import UTC, datetime, timedelta
@@ -100,7 +99,7 @@ def _get_embedding_model() -> Any:
     """Sentence-transformer model, or False if unavailable / disabled (CODEFORGE_EMBEDDINGS=hash)."""
     global _model, _warned_fallback
     if _model is None:
-        if os.environ.get("CODEFORGE_EMBEDDINGS") == "hash":
+        if get_settings().codeforge_embeddings == "hash":
             _model = False
         else:
             try:
@@ -131,7 +130,7 @@ def _compute_embedding(text: str) -> list[float]:
 
 
 def cache_enabled() -> bool:
-    return os.environ.get("CODEFORGE_CACHE_ENABLED", "1") != "0"
+    return get_settings().codeforge_cache_enabled
 
 
 class SemanticCache:
@@ -144,8 +143,8 @@ class SemanticCache:
         if not context_free or not cache_enabled():
             return None
         cfg = get_settings().cache
-        threshold = float(cfg.get("threshold", 0.92))
-        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=float(cfg.get("ttl_hours", 24)))
+        threshold = cfg.threshold
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=cfg.ttl_hours)
         target_guard = extract_guard_tokens(request_text)
         target_emb = np.asarray(_compute_embedding(request_text), dtype=np.float32)
 

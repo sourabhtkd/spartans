@@ -41,8 +41,8 @@ Final breaker states: {'primary': 'CLOSED', 'fallback': 'CLOSED'}
 | 3 | Generate the nth fibonacci number | `template` | ✅ | — | ✅ |
 | 4 | Implement fizzbuzz for numbers 1 to n | `template` | ✅ | — | ✅ |
 | 5 | Calculate the sum of a list of numbers | `template` | ✅ | — | ✅ |
-| 6 | Implement an advanced ray tracing BVH algorithm | `refused` | — | tkt_90f78b55 | ✅ |
-| 7 | Write a lock-free concurrent skip list | `refused` | — | tkt_5f0cf6e9 | ✅ |
+| 6 | Implement an advanced ray tracing BVH algorithm | `refused` | — | tkt_59a4336a | ✅ |
+| 7 | Write a lock-free concurrent skip list | `refused` | — | tkt_4a65b299 | ✅ |
 
 - Template tasks return code + passing tests during outage: **YES**
 - Unknown tasks get an honest refusal + ticket (never invented code): **YES**

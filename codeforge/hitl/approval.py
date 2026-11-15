@@ -165,7 +165,7 @@ def expire_stale(graph: Any, now: datetime | None = None, expiry_minutes: float 
     minutes = (
         expiry_minutes
         if expiry_minutes is not None
-        else float(get_settings().approval.get("expiry_minutes", 30))
+        else get_settings().approval.expiry_minutes
     )
     now_naive = (now or datetime.now(UTC)).replace(tzinfo=None)
     cutoff = now_naive - timedelta(minutes=minutes)

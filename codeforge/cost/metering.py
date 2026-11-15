@@ -13,11 +13,9 @@ logger = get_logger("metering")
 
 def compute_cost(model_name: str, input_tokens: int, output_tokens: int) -> float:
     """Cost in USD from the per-1k price table in config.yaml."""
-    for cfg in get_settings().models.values():
-        if cfg.get("name") == model_name:
-            return (
-                input_tokens * cfg.get("in_per_1k", 0.0) + output_tokens * cfg.get("out_per_1k", 0.0)
-            ) / 1000.0
+    for model in get_settings().models.values():
+        if model.name == model_name:
+            return (input_tokens * model.in_per_1k + output_tokens * model.out_per_1k) / 1000.0
     return 0.0
 
 

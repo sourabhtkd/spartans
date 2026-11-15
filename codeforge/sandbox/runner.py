@@ -8,6 +8,7 @@ import sys
 import tempfile
 from collections.abc import Callable
 
+from codeforge.config import get_settings
 from codeforge.privacy.pii import mask_text
 from codeforge.state import RunResult
 
@@ -123,7 +124,7 @@ def _scrubbed_env(tmpdir: str) -> dict[str, str]:
 
 
 def _docker_command(tmpdir: str, mem_mb: int) -> list[str]:
-    image = os.environ.get("SANDBOX_DOCKER_IMAGE", "codeforge-sandbox")
+    image = get_settings().sandbox_docker_image
     return [
         "docker", "run", "--rm", "--network", "none", "--memory", f"{mem_mb}m",
         "--pids-limit", "64", "--read-only", "--tmpfs", "/tmp",
@@ -135,7 +136,7 @@ def _docker_command(tmpdir: str, mem_mb: int) -> list[str]:
 
 def _build_command(tmpdir: str, mem_mb: int) -> tuple[list[str], dict[str, str], str]:
     """Pick the isolation backend. Returns (command, environment, isolation label)."""
-    if os.environ.get("SANDBOX_BACKEND", "local") == "docker":
+    if get_settings().sandbox_backend == "docker":
         return _docker_command(tmpdir, mem_mb), {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}, "docker_network_none"
 
     pytest_cmd = [

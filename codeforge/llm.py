@@ -52,9 +52,9 @@ def get_breaker(label: str) -> CircuitBreaker:
             cfg = get_settings().resilience
             _BREAKERS[label] = CircuitBreaker(
                 label,
-                failure_threshold=int(cfg.get("breaker_failures", 5)),
-                cooldown_s=float(cfg.get("breaker_cooldown_s", 30.0)),
-                window_s=float(cfg.get("breaker_window_s", 60.0)),
+                failure_threshold=cfg.breaker_failures,
+                cooldown_s=cfg.breaker_cooldown_s,
+                window_s=cfg.breaker_window_s,
             )
         return _BREAKERS[label]
 
@@ -74,9 +74,8 @@ def get_llm_for_tier(tier: str) -> BaseChatModel:
     """Client per tier. Timeout is bounded and provider-level retries are off:
     our own retry loop owns retries (jitter, Retry-After, breaker accounting)."""
     settings = get_settings()
-    cfg = settings.models.get(tier, {})
-    provider = cfg.get("provider", "groq")
-    name = cfg.get("name", "llama-3.1-8b-instant")
+    model = settings.model_for(tier)
+    provider, name = model.provider, model.name
     if provider == "openai":
         if not settings.fallback_api_key:
             raise LLMConfigError("FALLBACK_API_KEY is not set")
@@ -91,7 +90,7 @@ def clear_llm_cache() -> None:
 
 
 def _model_name(tier: str) -> str:
-    return str(get_settings().models.get(tier, {}).get("name", tier))
+    return get_settings().model_for(tier).name
 
 
 def _invoke_once(agent: str, tier: str, label: str, messages: Any, schema: type[T], attempt: int) -> T:
@@ -122,11 +121,11 @@ def _invoke_once(agent: str, tier: str, label: str, messages: Any, schema: type[
 
 def _retry_delay(exc: Exception, attempt: int) -> float:
     """Seconds to wait before the next attempt: honour Retry-After, else full-jitter backoff."""
-    cfg = get_settings().resilience
     retry_after = get_retry_after(exc)
     if retry_after is not None:
         return retry_after
-    return calculate_backoff(attempt, float(cfg.get("base_s", 0.5)), float(cfg.get("cap_s", 8.0)))
+    cfg = get_settings().resilience
+    return calculate_backoff(attempt, cfg.base_s, cfg.cap_s)
 
 
 def _call_provider(agent: str, tier: str, label: str, messages: Any, schema: type[T]) -> T | None:
@@ -136,7 +135,7 @@ def _call_provider(agent: str, tier: str, label: str, messages: Any, schema: typ
     one failure; bad model output (LLMOutputError) is not a provider outage, so it does not count.
     """
     breaker = get_breaker(label)
-    max_retries = int(get_settings().resilience.get("max_retries", 3))
+    max_retries = get_settings().resilience.max_retries
 
     for attempt in range(max_retries):
         try:
