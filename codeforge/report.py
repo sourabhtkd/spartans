@@ -1,4 +1,6 @@
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -9,7 +11,7 @@ _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 _ENV = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescape=False)
 
 
-def is_refused(state: CodeForgeState) -> bool:
+def is_refused(state: Mapping[str, Any]) -> bool:
     """True when the policy denied the code or a reviewer rejected it: such code is never shown."""
     policy = state.get("policy")
     approval = state.get("approval")

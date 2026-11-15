@@ -54,14 +54,19 @@ def test_breakers_built_from_config():
 
 
 def test_metering_callback_records_real_usage_and_cost():
-    cb = MeteringCallback("codegen", "llama-3.3-70b-versatile", request_id="req1")
+    from codeforge.config import get_settings
+    from codeforge.cost.metering import compute_cost
+
+    large = get_settings().models["large"]  # prices come from config.yaml, never hardcoded
+    cb = MeteringCallback("codegen", large.name, request_id="req1")
     cb.on_chat_model_start({}, [[]])
     msg = AIMessage(content="x", usage_metadata={"input_tokens": 1000, "output_tokens": 500, "total_tokens": 1500})
     cb.on_llm_end(LLMResult(generations=[[ChatGeneration(message=msg)]]))
     with init_db()() as s:
         row = s.query(Metric).one()
     assert (row.request_id, row.agent, row.input_tokens, row.output_tokens) == ("req1", "codegen", 1000, 500)
-    assert row.cost_usd == pytest.approx((1000 * 0.00059 + 500 * 0.00079) / 1000)
+    assert row.cost_usd == pytest.approx((1000 * large.in_per_1k + 500 * large.out_per_1k) / 1000)
+    assert compute_cost("unknown-model", 1, 1) == 0.0
 
 
 class _FakeStructured:

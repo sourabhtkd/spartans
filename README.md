@@ -103,7 +103,7 @@ flowchart TD
 | 11 | `sandbox_run` | Python | Idempotent claim, then `pytest` in a tempdir subprocess (rlimits, scrubbed env, network blocked) | `evaluator`, `cache_store`, `codegen` (repair) or `escalate_check` |
 | 12 | `evaluator` | LLM | Advisory critique of a passing solution; never changes pass/fail | `cache_store` |
 | 13 | `cache_store` | Python | Stores a passing, context-free solution in the semantic cache | `escalate_check` |
-| 14 | `escalate_check` | Python | Opens a P1/P2/P3 ticket for outage-refusals, repeated policy denials or failed repairs | `report` |
+| 14 | `escalate_check` | Python | Opens a ticket when: the user asks for a human (P1 if ALL CAPS / `!!` / "URGENT", else P2); the model tier refused (outage, no template); tests stayed invalid after regeneration; approval was rejected or expired; ≥2 policy denials in the session; ≥2 failed repairs. Rules live in `hitl/handoff.py` | `report` |
 | 15 | `report` | Python (Jinja2) | Renders the final answer from raw state; "✅ Tests passed" only if the sandbox exit code is `0` | END |
 
 ### Key loops and guarantees
@@ -112,7 +112,8 @@ flowchart TD
 - **Test regeneration loop** (`test_validator → testgen`): invalid generated tests are regenerated up to `MAX_TEST_REGENERATIONS = 2`, then escalated. Invalid tests never run.
 - **Cache hits are not trusted**: a hit jumps to `test_validator` and still passes the policy gate and sandbox; it just skips the LLM agents and the evaluator.
 - **Human-in-the-loop**: `needs_approval` calls LangGraph `interrupt()`; state is checkpointed in SQLite, and `resume_approval()` continues the same thread once an instructor decides (or fails closed on expiry).
-- **Degradation ladder** (inside every LLM agent): primary model → fallback model → offline template → honest refusal + ticket. Chaos injection, retries with full jitter and per-tier circuit breakers all sit in `llm.resilient_invoke`.
+- **Degradation ladder** (inside every LLM agent): primary model → fallback model → offline template → honest refusal + ticket. Chaos injection, retries with full jitter and per-tier circuit breakers all sit in `llm.resilient_invoke`. Only transient errors (429, 5xx, timeout) are retried; the wait honours `Retry-After`, else full-jitter backoff `uniform(0, min(cap_s, base_s·2^attempt))` (`resilience/retry.py`). After the last failed retry it switches to the fallback model immediately (no extra sleep); an open breaker skips that tier.
+- **History compaction (R4)**: chat history longer than `compaction.max_turns` (6) is summarised by the small `compaction` tier *after* masking (`agents/history.py`), falling back to deterministic truncation if the summariser fails. Follow-up turns bypass the semantic cache.
 - **Every path ends in `escalate_check → report`** (except the two early exits from `ingress_guard` and `router`, which go straight to `report`), so the user always receives a deterministic, honest answer.
 
 ### Cross-cutting layers
@@ -182,7 +183,7 @@ codeforge/
 ├── store/              # SQLAlchemy 2.0 models, identity-scoped RunStore, quotas, atomic idempotency claim, conversations
 ├── hitl/               # approval (interrupt/resume, server-side approver, expiry) + handoff tickets
 ├── resilience/         # retry classifier + jitter, circuit breaker, chaos switch, template library
-├── cost/               # metering callback, guarded semantic cache, history compaction
+├── cost/               # metering callback, guarded semantic cache (in-memory or Redis)
 ├── report.py           # deterministic Jinja2 report renderer (templates/report.md.j2)
 ├── bench/              # chaos + cost benchmarks, simulated provider (clearly labelled)
 ├── llm.py              # the single resilient call path (metering + Langfuse + retries + breaker + fallback)
@@ -195,6 +196,7 @@ evals/
 ├── test_golden.py      # gate runner + summary naming failing cases
 ├── checks/             # what each golden `kind` verifies (privacy, safety, hitl, resilience, quality)
 ├── reference_tests/    # HIDDEN reference tests used to grade generated code
+├── cassettes/          # recorded LLM replies for `mode: "llm"` cases (created by `make record`; not committed yet)
 └── cost_script.json    # fixed 20-request script for the cost benchmark
 tests/helpers.py        # shared test helpers: scripted fake model, outage, sandbox spy, cassettes
 redteam/corpus.yaml     # 47 adversarial inputs (+ promptfooconfig.yaml for live probing)
@@ -212,7 +214,7 @@ reports/                # generated: chaos_log.md, cost_table.md
 
 ### 2. Setup Environment
 ```bash
-git clone https://github.com/sourabhkumargupta/codeforge.git
+git clone https://github.com/sourabhtkd/codeforge.git
 cd codeforge
 
 # Install all dependencies into virtual environment
@@ -275,6 +277,8 @@ make lint typecheck   # ruff + mypy
 make test             # unit tests (isolated per-test sqlite; never touches real keys)
 make gate             # golden gate: HARD must be 100%, SOFT >= 85% of the cases that ran
 make gate-demo        # live demo: weaken a rule -> gate RED naming the case -> restore -> GREEN
+make record           # record LLM cassettes for the `mode: "llm"` golden cases (needs GROQ_API_KEY)
+make docker-build     # build the app image; `make logs` tails the compose services
 ```
 
 CI (`.github/workflows/ci.yml`) runs gitleaks, ruff, mypy, unit tests and the golden gate on every push/PR.
@@ -299,7 +303,9 @@ GROQ_API_KEY=... uv run python scripts/chaos_run.py  # live provider (real numbe
 `--offline` uses a **simulated provider** and every report is labelled `SIMULATED`: the chaos injection,
 retries, breakers, fallback, metering and cache are the real code paths, but token counts are estimated
 and model quality is not measured. Re-run with a key for real usage numbers. The pass/NOT MET verdicts are
-computed from the run, never hardcoded.
+computed from the run, never hardcoded. Shortcuts: `make bench-chaos`, `make bench-cost`.
+
+**Latest cost result** (`reports/cost_table.md`, SIMULATED): **76.3% cheaper** ($0.013355 → $0.003169), model calls 100 → 45, 11 cache hits, hidden-reference pass rate 20/20 before and after. Target (≥30% cheaper, no quality drop): **MET**.
 
 ---
 
