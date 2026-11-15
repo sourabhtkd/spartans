@@ -14,9 +14,9 @@ from unittest.mock import patch
 
 from codeforge import llm
 from codeforge.bench.offline import SimulatedLLM
-from codeforge.config import clear_settings_cache
 from codeforge.entrypoint import submit
 from codeforge.pipeline import build_graph
+from codeforge.runtime import reset_runtime_state
 
 TEMPLATE_TASKS = [
     "Write an is_palindrome function",
@@ -44,16 +44,6 @@ class RequestRow:
     breakers: dict[str, str] = field(default_factory=dict)
 
 
-def _reset_runtime_state() -> None:
-    """Forget cached settings/clients/breakers/cache so each run starts clean."""
-    from codeforge.cost import semantic_cache
-
-    clear_settings_cache()
-    llm.reset_breakers()
-    llm.clear_llm_cache()
-    semantic_cache._semantic_cache = None
-
-
 @contextmanager
 def isolated_run(rate: float, outage: bool, seed: int, offline: bool, fast: bool) -> Iterator[dict[str, int]]:
     """Run with a private DB, the given chaos settings and (optionally) the simulated provider.
@@ -74,7 +64,7 @@ def isolated_run(rate: float, outage: bool, seed: int, offline: bool, fast: bool
     with tempfile.TemporaryDirectory(prefix="cf_bench_") as tmp, ExitStack() as stack:
         # ExitStack unwinds last-in-first-out: registered first, so this reset runs LAST,
         # after the environment and the patches below have been restored.
-        stack.callback(_reset_runtime_state)
+        stack.callback(reset_runtime_state)
         stack.enter_context(
             patch.dict(
                 os.environ,
@@ -86,7 +76,7 @@ def isolated_run(rate: float, outage: bool, seed: int, offline: bool, fast: bool
                 },
             )
         )
-        _reset_runtime_state()  # pick up the new environment (before llm functions are patched)
+        reset_runtime_state()  # pick up the new environment (before llm functions are patched)
         stack.enter_context(patch.object(llm, "maybe_fail", counting_maybe_fail))
         if offline:
             stack.enter_context(patch.object(llm, "get_llm_for_tier", lambda tier: SimulatedLLM()))

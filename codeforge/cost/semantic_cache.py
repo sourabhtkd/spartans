@@ -195,6 +195,12 @@ class SemanticCache:
 _semantic_cache: SemanticCache | None = None
 
 
+def reset_semantic_cache() -> None:
+    """Forget the process-wide cache object (it is rebuilt on next use, e.g. after the DB path changes)."""
+    global _semantic_cache
+    _semantic_cache = None
+
+
 def get_semantic_cache() -> SemanticCache:
     global _semantic_cache
     if _semantic_cache is None:
