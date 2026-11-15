@@ -2,6 +2,7 @@ import os
 import sqlite3
 from typing import Any, Literal
 
+import structlog
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
@@ -27,6 +28,49 @@ from codeforge.store.runs import (
     RunStore,
     compute_idempotency_key,
 )
+
+
+def _summarise(name: str, out: dict[str, Any]) -> dict[str, Any]:
+    """Small, PII-free facts about a node's output for structured logs / traces."""
+    facts: dict[str, Any] = {}
+    if "policy" in out and out["policy"] is not None:
+        facts["policy_verdict"] = out["policy"].verdict
+    if "served_tier" in out:
+        facts["served_tier"] = out["served_tier"]
+    if "cache_hit" in out:
+        facts["cache_hit"] = out["cache_hit"]
+    if "run_result" in out and out["run_result"] is not None:
+        facts["exit_code"] = out["run_result"].exit_code
+        facts["timed_out"] = out["run_result"].timed_out
+    if out.get("ticket") is not None:
+        facts["ticket_priority"] = out["ticket"].priority
+    return facts
+
+
+def _traced(name: str, fn: Any) -> Any:
+    """Wrap a node: structured node_start / node_end / node_paused / node_error with duration."""
+    import time
+
+    def wrapper(state: CodeForgeState) -> Any:
+        structlog.contextvars.bind_contextvars(agent=name)
+        logger.info("node_start", node=name)
+        t0 = time.perf_counter()
+        try:
+            out = fn(state)
+        except BaseException as exc:
+            kind = "node_paused" if type(exc).__name__ == "GraphInterrupt" else "node_error"
+            logger.info(kind, node=name, duration_ms=round((time.perf_counter() - t0) * 1000, 1))
+            raise
+        logger.info(
+            "node_end",
+            node=name,
+            duration_ms=round((time.perf_counter() - t0) * 1000, 1),
+            **(_summarise(name, out) if isinstance(out, dict) else {}),
+        )
+        return out
+
+    wrapper.__name__ = name
+    return wrapper
 
 
 def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
@@ -347,21 +391,21 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     graph = StateGraph(CodeForgeState)
 
     # Add all nodes
-    graph.add_node("ingress_guard", ingress_guard)
-    graph.add_node("cache_lookup", cache_lookup)
-    graph.add_node("router", router_node)
-    graph.add_node("requirements", requirements_node)
-    graph.add_node("codegen", codegen_node)
-    graph.add_node("testgen", testgen_node)
-    graph.add_node("test_validator", test_validator_node)
-    graph.add_node("policy_gate", policy_gate_node)
-    graph.add_node("refuse", refuse_node)
-    graph.add_node("human_approval", human_approval_node)
-    graph.add_node("sandbox_run", sandbox_run_node)
-    graph.add_node("evaluator", evaluator_node)
-    graph.add_node("cache_store", cache_store_node)
-    graph.add_node("escalate_check", escalate_check_node)
-    graph.add_node("report", report_node)
+    graph.add_node("ingress_guard", _traced("ingress_guard", ingress_guard))
+    graph.add_node("cache_lookup", _traced("cache_lookup", cache_lookup))
+    graph.add_node("router", _traced("router", router_node))
+    graph.add_node("requirements", _traced("requirements", requirements_node))
+    graph.add_node("codegen", _traced("codegen", codegen_node))
+    graph.add_node("testgen", _traced("testgen", testgen_node))
+    graph.add_node("test_validator", _traced("test_validator", test_validator_node))
+    graph.add_node("policy_gate", _traced("policy_gate", policy_gate_node))
+    graph.add_node("refuse", _traced("refuse", refuse_node))
+    graph.add_node("human_approval", _traced("human_approval", human_approval_node))
+    graph.add_node("sandbox_run", _traced("sandbox_run", sandbox_run_node))
+    graph.add_node("evaluator", _traced("evaluator", evaluator_node))
+    graph.add_node("cache_store", _traced("cache_store", cache_store_node))
+    graph.add_node("escalate_check", _traced("escalate_check", escalate_check_node))
+    graph.add_node("report", _traced("report", report_node))
 
     # Connect edges
     graph.add_edge(START, "ingress_guard")

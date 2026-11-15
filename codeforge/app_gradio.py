@@ -108,19 +108,48 @@ def get_tickets_table() -> list[list[str]]:
 
 
 def get_ops_metrics() -> str:
-    sf = init_db()
-    with sf() as session:
-        metrics = session.query(Metric).order_by(Metric.created_at.desc()).limit(20).all()
-        total_tokens = sum(m.input_tokens + m.output_tokens for m in metrics)
-        total_cost = sum(m.cost_usd for m in metrics)
+    """Per-agent cost/latency from the metering table plus live circuit-breaker states."""
+    from sqlalchemy import func
 
-    cost_summary = (
-        f"### Ops Telemetry Summary\n"
-        f"- **Recent Tracked Calls**: {len(metrics)}\n"
-        f"- **Recent Total Tokens**: {total_tokens}\n"
-        f"- **Estimated USD Cost**: ${total_cost:.5f}\n"
-    )
-    return cost_summary
+    from codeforge.llm import breaker_states
+
+    with init_db()() as session:
+        rows = (
+            session.query(
+                Metric.agent,
+                func.count(Metric.id),
+                func.sum(Metric.input_tokens),
+                func.sum(Metric.output_tokens),
+                func.sum(Metric.cost_usd),
+                func.avg(Metric.latency_s),
+            )
+            .group_by(Metric.agent)
+            .all()
+        )
+    lines = [
+        "### Ops Telemetry",
+        "",
+        "| Agent | Calls | In tok | Out tok | Cost (USD) | Avg latency (s) |",
+        "|---|---|---|---|---|---|",
+    ]
+    total = 0.0
+    for agent, calls, tin, tout, cost, lat in rows:
+        total += cost or 0.0
+        lines.append(f"| {agent} | {calls} | {tin or 0} | {tout or 0} | ${cost or 0:.6f} | {lat or 0:.2f} |")
+    lines += ["", f"**Total cost**: ${total:.6f}", ""]
+    states = breaker_states()
+    lines.append("**Circuit breakers**: " + (", ".join(f"`{k}`={v}" for k, v in states.items()) or "none yet"))
+    lines.append(f"\n**Chaos failure rate**: {get_settings().chaos_failure_rate:.0%}")
+    return "\n".join(lines)
+
+
+def set_chaos(rate: float) -> str:
+    """Instructor-only chaos switch (demo): fail this fraction of model calls."""
+    if current_identity().role != "instructor":
+        return "⛔ Only instructors can change the chaos setting."
+    os.environ["CHAOS_FAILURE_RATE"] = str(rate)
+    clear_settings_cache()
+    return f"Chaos failure rate set to {rate:.0%}."
 
 
 def update_profile(profile_name: str) -> tuple[str, Any]:
@@ -245,18 +274,23 @@ def build_app() -> gr.Blocks:
             # 5. Ops & Resilience Tab
             with gr.Tab("⚙️ Ops & Telemetry"):
                 ops_summary = gr.Markdown(value=get_ops_metrics)
+                chaos_slider = gr.Slider(0, 1, value=0, step=0.1, label="Chaos: fraction of model calls to fail (instructor only)")
+                chaos_status = gr.Markdown()
+                chaos_slider.release(set_chaos, inputs=[chaos_slider], outputs=[chaos_status])
                 refresh_ops_btn = gr.Button("Refresh Metrics")
                 refresh_ops_btn.click(get_ops_metrics, outputs=[ops_summary])
 
-    profile_dropdown.change(
-        update_profile, inputs=[profile_dropdown], outputs=[profile_badge, reviewer_tab]
-    )
+        profile_dropdown.change(
+            update_profile, inputs=[profile_dropdown], outputs=[profile_badge, reviewer_tab]
+        )
+
     return demo
 
 
 def main() -> None:
     app = build_app()
-    app.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    # Loopback by default: the demo profile switch is process-global, so do not expose it publicly.
+    app.launch(server_name=os.environ.get("CODEFORGE_HOST", "127.0.0.1"), server_port=7860, share=False)
 
 
 if __name__ == "__main__":
