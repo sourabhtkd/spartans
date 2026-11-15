@@ -50,7 +50,8 @@ class _SimStructured:
         out_text = parsed.model_dump_json() if parsed is not None else ""
         in_tokens = max(1, len(_text(messages)) // 4)
         out_tokens = max(1, len(out_text) // 4)
-        for cb in (config or {}).get("callbacks", []):
+        callbacks = (config or {}).get("callbacks") or []
+        for cb in getattr(callbacks, "handlers", callbacks):  # list or CallbackManager
             msg = AIMessage(
                 content=out_text,
                 usage_metadata={

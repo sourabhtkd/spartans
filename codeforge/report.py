@@ -2,11 +2,16 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from codeforge.config import get_settings
+from codeforge.config import current_identity, get_settings
 from codeforge.state import CodeForgeState
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 _ENV = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescape=False)
+
+
+def _can_view_ticket_details(state: CodeForgeState) -> bool:
+    identity = state.get("identity") or current_identity()
+    return identity.role == "instructor"
 
 
 def determine_status_message(state: CodeForgeState) -> str:
@@ -18,6 +23,8 @@ def determine_status_message(state: CodeForgeState) -> str:
 
     ticket = state.get("ticket")
     if ticket and not state.get("code") and ticket.reason.startswith("User requested human"):
+        if not _can_view_ticket_details(state):
+            return "🙋 Your request was escalated to a human. Nothing was executed."
         return (
             f"🙋 Your request was escalated to a human (ticket {ticket.ticket_id}, "
             f"{ticket.priority}, SLA {ticket.sla_hours}h). Nothing was executed."
@@ -63,7 +70,7 @@ def render_report(state: CodeForgeState) -> str:
     template = _ENV.get_template("report.md.j2")
     status_msg = determine_status_message(state)
     run_result = state.get("run_result")
-    ticket = state.get("ticket")
+    ticket = state.get("ticket") if _can_view_ticket_details(state) else None
 
     notes: list[str] = []
     for ev in state.get("events", []):

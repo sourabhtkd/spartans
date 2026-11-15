@@ -1,3 +1,4 @@
+from codeforge.config import Identity
 from codeforge.report import render_report
 from codeforge.state import (
     ApprovalDecision,
@@ -63,6 +64,7 @@ def test_report_includes_metadata_and_ticket():
     )
     res = RunResult(exit_code=0, passed=2, failed=0, cached=True)
     state: CodeForgeState = {
+        "identity": Identity(user_id="u_prof", role="instructor"),
         "run_result": res,
         "served_by": "template",
         "cache_hit": True,
@@ -75,3 +77,23 @@ def test_report_includes_metadata_and_ticket():
     assert "template" in rep
     assert "Idempotency Note" in rep
     assert "Semantic Cache Hit" in rep
+
+
+def test_student_report_hides_ticket_details():
+    ticket = HandoffTicket(
+        ticket_id="tkt_private",
+        priority="P1",
+        sla_hours=4,
+        request_masked="masked",
+        attempts=0,
+        reason="User requested human assistance",
+    )
+    state: CodeForgeState = {
+        "identity": Identity(user_id="u_alice", role="student"),
+        "ticket": ticket,
+    }
+    rep = render_report(state)
+    assert "escalated to a human" in rep
+    assert "tkt_private" not in rep
+    assert "P1" not in rep
+    assert "User requested human assistance" not in rep

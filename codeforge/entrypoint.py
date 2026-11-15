@@ -14,7 +14,9 @@ from codeforge.config import current_identity
 from codeforge.observability import (
     current_request_id,
     current_session_id,
-    langfuse_handler,
+    flush_langfuse,
+    langfuse_run_config,
+    run_facts,
     trace_turn,
 )
 from codeforge.privacy.pii import mask_obj, mask_text
@@ -78,11 +80,10 @@ def submit(
                 "thread_id": tid,
             },
         }
-        handler = langfuse_handler() if turn.trace_id else None
-        if handler is not None:
-            config["callbacks"] = [handler]
-        graph.invoke(initial, config=config)
+        graph.invoke(initial, config=langfuse_run_config(config, turn))
         snap = graph.get_state({"configurable": {"thread_id": tid}})
         report = snap.values.get("report")
         turn.output = report if isinstance(report, str) else None
+        turn.metadata = run_facts(snap.values, snap.next)
+    flush_langfuse()
     return SubmitResult(thread_id=tid, values=dict(snap.values), next_nodes=tuple(snap.next), trace_id=turn.trace_id)

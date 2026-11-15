@@ -209,6 +209,8 @@ def review_decision(thread_id: str, action: str, comment: str) -> str:
 
 
 def tickets_table() -> list[list[str]]:
+    if current_identity().role != "instructor":
+        raise PermissionError("Only instructors may view tickets.")
     sf = init_db()
     with sf() as session:
         tickets = session.query(Ticket).order_by(Ticket.created_at.desc()).all()
@@ -257,18 +259,3 @@ def set_chaos_rate(rate: float) -> str:
     os.environ["CHAOS_FAILURE_RATE"] = str(rate)
     clear_settings_cache()
     return f"Chaos failure rate set to {rate:.0%}."
-
-
-def identity_badge() -> str:
-    ident = current_identity()
-    return f"**Active Identity**: `[{ident.user_id}]` | **Role**: `{ident.role}`"
-
-
-def switch_profile(profile_name: str) -> tuple[str, bool]:
-    """Demo-only profile switch (identity still comes from config profiles, never from text).
-
-    Returns (identity badge text, whether to show the reviewer tab).
-    """
-    os.environ["CODEFORGE_PROFILE"] = profile_name
-    clear_settings_cache()
-    return identity_badge(), current_identity().role == "instructor"

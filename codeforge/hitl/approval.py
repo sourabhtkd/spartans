@@ -15,7 +15,14 @@ from typing import Any
 from langgraph.types import Command, interrupt
 
 from codeforge.config import current_identity, get_settings
-from codeforge.observability import get_logger
+from codeforge.observability import (
+    current_request_id,
+    flush_langfuse,
+    get_logger,
+    langfuse_run_config,
+    run_facts,
+    trace_turn,
+)
 from codeforge.state import ApprovalDecision, CodeForgeState, PolicyDecision
 from codeforge.store.db import Approval, init_db
 
@@ -127,6 +134,27 @@ def _config(thread_id: str) -> dict[str, Any]:
     return {"configurable": {"thread_id": thread_id}}
 
 
+def _traced_resume(graph: Any, thread_id: str, payload: dict[str, Any], *, user_id: str, role: str) -> Any:
+    """Resume the paused graph inside its own Langfuse trace (session = the run's thread)."""
+    current_request_id.set(thread_id)  # metering rows join the original request
+    with trace_turn(
+        session_id=thread_id,
+        user_id=user_id,
+        name="approval_resume",
+        tags=[role, "codeforge", "resume"],
+        input={"thread_id": thread_id, "approved": payload.get("approved"), "comment": payload.get("comment")},
+    ) as turn:
+        config = _config(thread_id)
+        config["metadata"] = {"langfuse_session_id": thread_id, "langfuse_user_id": user_id, "thread_id": thread_id}
+        result = graph.invoke(Command(resume=payload), config=langfuse_run_config(config, turn))
+        snap = graph.get_state(_config(thread_id))
+        report = snap.values.get("report")
+        turn.output = report if isinstance(report, str) else None
+        turn.metadata = run_facts(snap.values, snap.next)
+    flush_langfuse()
+    return result
+
+
 def resume_approval(graph: Any, thread_id: str, approved: bool, comment: str = "") -> Any:
     """Resume a paused run. The approver is the *server-side* current identity.
 
@@ -149,7 +177,9 @@ def resume_approval(graph: Any, thread_id: str, approved: bool, comment: str = "
         approver_id=approver.user_id,
         comment=comment or ("Approved by instructor" if approved else "Rejected by instructor"),
     )
-    return graph.invoke(Command(resume=decision.model_dump()), config=_config(thread_id))
+    return _traced_resume(
+        graph, thread_id, decision.model_dump(), user_id=approver.user_id, role=approver.role
+    )
 
 
 def list_pending() -> list[Approval]:
@@ -178,7 +208,7 @@ def expire_stale(graph: Any, now: datetime | None = None, expiry_minutes: float 
             approved=False, approver_id=SYSTEM_EXPIRY_ID, comment="Rejected: approval request expired."
         ).model_dump()
         try:
-            graph.invoke(Command(resume=payload), config=_config(rec.thread_id))
+            _traced_resume(graph, rec.thread_id, payload, user_id=SYSTEM_EXPIRY_ID, role="system")
         except Exception as exc:  # noqa: BLE001 - one bad thread must not block the rest
             logger.warning("expire_failed", thread_id=rec.thread_id, error=str(exc))
             with init_db()() as session:

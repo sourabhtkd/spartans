@@ -163,9 +163,11 @@ uv run python -m codeforge.cli "Write a function to check if a string is a palin
 CODEFORGE_PROFILE=instructor uv run python -m codeforge.cli "Write an is_prime checker"
 ```
 
-### Streamlit Web UI (top navigation, 5 pages)
+### Streamlit Web UI
 ```bash
 uv run python -m codeforge.ui
+# Instructor pages:
+CODEFORGE_PROFILE=instructor uv run python -m codeforge.ui
 ```
 Access the application at `http://localhost:8501`:
 - **Chat**: a real conversation. Each chat has its own session id (`conv_xxxxxxxx`), is saved in the DB (tables `conversations` / `messages`) and listed on the left so you can reopen it. Follow-ups ("now add type hints") get the earlier turns as context. Live progress shows each pipeline step; every reply has a solution/tests viewer and 👍/👎 feedback.
@@ -173,7 +175,7 @@ Access the application at `http://localhost:8501`:
 **Observability per conversation.** Every user and assistant message is logged as a structured `chat_message` event (PII-masked, with `conversation_id`). With `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` set, Langfuse shows one **session per conversation** and one **trace per turn** (pipeline nodes and LLM calls nested under it, tagged with the user and role); 👍/👎 is recorded as a `user_feedback` score on the turn's trace.
 - **My Runs**: Role-isolated run history (cross-user access strictly blocked).
 - **Reviewer Queue**: Instructor-only approval dashboard for sensitive operations.
-- **Tickets**: Sanitized human support escalation tickets.
+- **Tickets**: Instructor-only list of sanitized human support escalation tickets.
 - **Ops**: Real-time token cost table, circuit breaker status, chaos toggle.
 
 ---
@@ -239,7 +241,7 @@ computed from the run, never hardcoded.
 ## Known Limitations (honest notes)
 - R3 is partial (explicit-human / repeated-denial / failed-repair escalation with P1 tickets; no sentiment triage). R7 (SQL agent) is not built.
 - On macOS the sandbox cannot apply an address-space rlimit or a network namespace; it still enforces timeout, CPU/file/fd limits, scrubbed env and a Python-level socket block. On Linux `unshare -rn` and `RLIMIT_NPROC` are used when available; `SANDBOX_BACKEND=docker` (see `Dockerfile.sandbox`) gives full isolation.
-- The Streamlit profile dropdown is a **demo-only**, process-global identity switch; the server binds to `127.0.0.1` by default (`CODEFORGE_HOST` to override). Do not expose it publicly.
+- The Streamlit UI uses one server-selected `CODEFORGE_PROFILE` for all sessions. It has no per-user login, so deploy separate trusted instances or add authentication before serving multiple users. The server binds to `127.0.0.1` by default (`CODEFORGE_HOST` to override).
 - Schema is created with `create_all` (no migrations); delete the local sqlite files after model changes.
 
 ---

@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     fallback_api_key: str = ""
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
-    langfuse_host: str = "https://cloud.langfuse.com"
+    langfuse_base_url: str = "https://cloud.langfuse.com"
     chaos_failure_rate: float = 0.0  # fraction of model calls to fail on purpose (R5 demo)
     total_outage: bool = False  # fail every model call
     codeforge_profile: str | None = None  # overrides active_profile

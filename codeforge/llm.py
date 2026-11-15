@@ -10,7 +10,9 @@ import time
 from functools import lru_cache
 from typing import Any, TypeVar, cast
 
+from langchain_core.callbacks.base import BaseCallbackManager
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.runnables.config import ensure_config
 from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
@@ -21,6 +23,7 @@ from codeforge.observability import (
     current_request_id,
     current_session_id,
     get_logger,
+    has_langfuse_handler,
     langfuse_handler,
 )
 from codeforge.resilience.breaker import CircuitBreaker
@@ -98,11 +101,33 @@ def _model_name(tier: str) -> str:
     return get_settings().model_for(tier).name
 
 
+def _call_callbacks(agent: str, tier: str) -> Any:
+    """Callbacks for one model call, ADDED to those inherited from the running graph node.
+
+    Passing a plain ``callbacks`` list would replace the node's callback manager, detaching the
+    generation from the graph trace. So: extend the parent manager with metering, and add a
+    standalone Langfuse handler only when no parent one exists (direct calls, evals).
+    """
+    metering = MeteringCallback(agent, _model_name(tier))
+    parent = ensure_config().get("callbacks")
+    callbacks: Any
+    if isinstance(parent, BaseCallbackManager):
+        callbacks = parent.copy()
+        callbacks.add_handler(metering, inherit=True)
+    else:
+        callbacks = [*(parent or []), metering]
+    if not has_langfuse_handler(callbacks):
+        lf = langfuse_handler()
+        if lf is not None:
+            if isinstance(callbacks, BaseCallbackManager):
+                callbacks.add_handler(lf, inherit=True)
+            else:
+                callbacks.append(lf)
+    return callbacks
+
+
 def _invoke_once(agent: str, tier: str, label: str, messages: Any, schema: type[T], attempt: int) -> T:
-    callbacks: list[Any] = [MeteringCallback(agent, _model_name(tier))]
-    lf = langfuse_handler()
-    if lf is not None:
-        callbacks.append(lf)
+    callbacks = _call_callbacks(agent, tier)
     structured = get_llm_for_tier(tier).with_structured_output(schema, include_raw=True)
     out = structured.invoke(
         messages,

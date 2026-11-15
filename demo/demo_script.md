@@ -91,10 +91,10 @@ Launch the interactive web dashboard:
 ```bash
 uv run python -m codeforge.ui
 ```
-Open [http://localhost:8501](http://localhost:8501) to present the 5 top-nav pages (profile switcher is the dropdown at the right of the nav bar):
+Start with `CODEFORGE_PROFILE=instructor uv run python -m codeforge.ui` and open [http://localhost:8501](http://localhost:8501) to present the 5 top-nav pages. Restart with `CODEFORGE_PROFILE=student_a` to show the student view (Chat, My Runs, Ops):
 
 1. **Page 1: Chat**: Profile displayed read-only from config; submit code requests; view honest markdown reports with pass/fail counts; click 👍 or 👎 to send feedback directly to the golden set flywheel.
 2. **Page 2: My Runs**: Strict user data isolation. Queries `RunStore.get_my_runs()` using the authenticated identity; foreign runs return 404.
 3. **Page 3: Reviewer Queue**: Accessible only to users with the `instructor` role. Displays suspended runs paused by LangGraph `interrupt()`; allows approving or rejecting sensitive file/socket operations.
-4. **Page 4: Tickets**: View all escalated human handoff tickets (P1/P2/P3) with masked context and SLA deadlines.
+4. **Page 4: Tickets**: Instructor-only view of escalated human handoff tickets (P1/P2/P3) with masked context and SLA deadlines.
 5. **Page 5: Ops Dashboard**: Per-agent cost/latency from the metering table, circuit breaker states, and an instructor-only chaos slider.
