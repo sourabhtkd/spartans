@@ -89,7 +89,7 @@ make gate-demo
 
 Launch the interactive web dashboard:
 ```bash
-uv run python -m codeforge.app_gradio
+uv run python -m codeforge.ui
 ```
 Open [http://localhost:7860](http://localhost:7860) to present the 5 tabs:
 

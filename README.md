@@ -112,7 +112,7 @@ codeforge/
 ├── cost/               # metering callback, guarded semantic cache, history compaction
 ├── bench/              # chaos + cost benchmarks, simulated provider (clearly labelled)
 ├── llm.py              # the single resilient call path (metering + Langfuse + retries + breaker + fallback)
-├── app_gradio.py       # Gradio UI (chat, my runs, reviewer queue, tickets, ops)
+├── ui/                 # web UI: handlers.py (what buttons do), layout.py (the Gradio page)
 └── config.py           # identity/role/quotas from config.yaml; never from message text
 evals/
 ├── golden_set.json     # 85 cases: hard (must be 100%) and soft (>= 85%)
@@ -164,7 +164,7 @@ CODEFORGE_PROFILE=instructor uv run python -m codeforge.cli "Write an is_prime c
 
 ### Gradio Interactive Web UI (5 Tabs)
 ```bash
-uv run python -m codeforge.app_gradio
+uv run python -m codeforge.ui
 ```
 Access the application at `http://localhost:7860`:
 - **Chat**: Code generation, honest status, solution/tests viewer, 👍/👎 feedback flywheel.
