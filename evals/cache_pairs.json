@@ -1,0 +1,93 @@
+[
+  {
+    "id": "pair_01",
+    "kind": "paraphrase",
+    "q1": "check if a string is palindrome",
+    "q2": "function to check if string is palindrome",
+    "expect": "hit"
+  },
+  {
+    "id": "pair_02",
+    "kind": "lookalike",
+    "q1": "sort list ascending",
+    "q2": "sort list descending",
+    "expect": "miss"
+  },
+  {
+    "id": "pair_03",
+    "kind": "lookalike",
+    "q1": "find min in numbers",
+    "q2": "find max in numbers",
+    "expect": "miss"
+  },
+  {
+    "id": "pair_04",
+    "kind": "lookalike",
+    "q1": "filter even numbers",
+    "q2": "filter odd numbers",
+    "expect": "miss"
+  },
+  {
+    "id": "pair_05",
+    "kind": "lookalike",
+    "q1": "fibonacci of 10",
+    "q2": "fibonacci of 20",
+    "expect": "miss"
+  },
+  {
+    "id": "pair_06",
+    "kind": "paraphrase",
+    "q1": "calculate factorial of a number",
+    "q2": "compute factorial of a number",
+    "expect": "hit"
+  },
+  {
+    "id": "pair_07",
+    "kind": "lookalike",
+    "q1": "search with case-sensitive",
+    "q2": "search without case-sensitive",
+    "expect": "miss"
+  },
+  {
+    "id": "pair_08",
+    "kind": "lookalike",
+    "q1": "solve with recursive approach",
+    "q2": "solve with iterative approach",
+    "expect": "miss"
+  },
+  {
+    "id": "pair_09",
+    "kind": "paraphrase",
+    "q1": "reverse words in string",
+    "q2": "function to reverse words in string",
+    "expect": "hit"
+  },
+  {
+    "id": "pair_10",
+    "kind": "lookalike",
+    "q1": "range inclusive of endpoints",
+    "q2": "range exclusive of endpoints",
+    "expect": "miss"
+  },
+  {
+    "id": "pair_11",
+    "kind": "lookalike",
+    "q1": "find first element in sequence",
+    "q2": "find last element in sequence",
+    "expect": "miss"
+  },
+  {
+    "id": "pair_12",
+    "kind": "lookalike",
+    "q1": "generate primes up to 100",
+    "q2": "generate primes up to 500",
+    "expect": "miss"
+  },
+  {
+    "id": "pair_13",
+    "kind": "paraphrase",
+    "q1": "compute sum of elements in list",
+    "q2": "calculate sum of elements in list",
+    "expect": "hit"
+  }
+]

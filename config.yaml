@@ -1,0 +1,15 @@
+active_profile: student_a        # overridden by env CODEFORGE_PROFILE
+profiles:
+  student_a: {user_id: u_alice, role: student}
+  student_b: {user_id: u_bob, role: student}
+  instructor: {user_id: u_prof, role: instructor}
+quotas: {student: {runs_per_hour: 20}, instructor: {runs_per_hour: 200}}
+models:
+  small: {provider: groq, name: llama-3.1-8b-instant, in_per_1k: 0.00005, out_per_1k: 0.00008}
+  large: {provider: groq, name: llama-3.3-70b-versatile, in_per_1k: 0.00059, out_per_1k: 0.00079}
+  fallback: {provider: groq, name: openai/gpt-oss-20b, in_per_1k: 0.0001, out_per_1k: 0.0005}
+agent_tiers: {router: small, requirements: small, codegen: large, testgen: large, evaluator: small, handoff: small, compaction: small}
+sandbox: {timeout_s: 10, mem_mb: 512}
+approval: {expiry_minutes: 30}
+cache: {threshold: 0.92, ttl_hours: 24}
+resilience: {max_retries: 3, base_s: 0.5, cap_s: 8, breaker_failures: 5, breaker_window_s: 60, breaker_cooldown_s: 30}

@@ -1,0 +1,46 @@
+# CodeForge Run Report
+
+**Status**: {{ status_message }}
+
+{% if is_cached_run %}
+> ⚡ **Idempotency Note**: Result served from cache (identical request already executed).
+{% endif %}
+
+{% if cache_hit %}
+> ⚡ **Semantic Cache Hit**: Reused verified solution.
+{% endif %}
+
+{% if ticket_id %}
+> 🎫 **Support Ticket Created**: `{{ ticket_id }}` (Reason: {{ ticket_reason }})
+{% endif %}
+
+---
+
+### Execution Metadata
+- **Model Tier**: `{{ served_tier }}`
+- **Execution Engine**: Sandboxed Pytest (rlimits + network-blocked)
+{% if run_result and run_result.exit_code is not none %}
+- **Exit Code**: `{{ run_result.exit_code }}`
+- **Passed**: {{ run_result.passed }} | **Failed**: {{ run_result.failed }}
+{% endif %}
+
+{% if code %}
+### Generated Solution
+```python
+{{ code }}
+```
+{% endif %}
+
+{% if tests %}
+### Generated Tests
+```python
+{{ tests }}
+```
+{% endif %}
+
+{% if stdout %}
+### Sandbox Output
+```text
+{{ stdout }}
+```
+{% endif %}
