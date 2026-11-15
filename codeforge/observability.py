@@ -1,5 +1,6 @@
 import sys
 from collections.abc import MutableMapping
+from contextvars import ContextVar
 from typing import Any
 
 import structlog
@@ -43,18 +44,49 @@ def get_logger(name: str = "codeforge") -> structlog.stdlib.BoundLogger:
     return structlog.get_logger(name)
 
 
-def langfuse_handler() -> Any:
-    """Returns a Langfuse CallbackHandler if API keys are set, otherwise None."""
-    settings = get_settings()
-    if settings.langfuse_public_key and settings.langfuse_secret_key:
-        try:
-            from langfuse.callback import CallbackHandler  # type: ignore
+# Request/thread id for the call currently being processed; read by metering and log binding.
+current_request_id: ContextVar[str] = ContextVar("current_request_id", default="")
 
-            return CallbackHandler(
+_langfuse_warned = False
+
+
+def _langfuse_mask(*, data: Any, **kwargs: Any) -> Any:
+    """Langfuse mask hook: scrub PII from everything sent to the tracing backend."""
+    return mask_obj(data)
+
+
+def langfuse_handler() -> Any:
+    """Return a Langfuse LangChain CallbackHandler (v3, falling back to v2), or None.
+
+    Inputs/outputs are masked via Langfuse's ``mask`` hook (v3). If keys are configured but the
+    handler cannot be created, a warning is logged once; the pipeline is never interrupted.
+    """
+    global _langfuse_warned
+    settings = get_settings()
+    if not (settings.langfuse_public_key and settings.langfuse_secret_key):
+        return None
+    try:
+        try:  # Langfuse v3
+            from langfuse import Langfuse
+            from langfuse.langchain import CallbackHandler as HandlerV3
+
+            Langfuse(
+                public_key=settings.langfuse_public_key,
+                secret_key=settings.langfuse_secret_key,
+                host=settings.langfuse_host,
+                mask=_langfuse_mask,
+            )
+            return HandlerV3()
+        except ImportError:  # Langfuse v2
+            from langfuse.callback import CallbackHandler as HandlerV2  # type: ignore[import-not-found]
+
+            return HandlerV2(
                 public_key=settings.langfuse_public_key,
                 secret_key=settings.langfuse_secret_key,
                 host=settings.langfuse_host,
             )
-        except Exception:  # noqa: BLE001 - optional import / init failure must not crash pipeline
-            return None
-    return None
+    except Exception as exc:  # noqa: BLE001 - tracing must never break the pipeline
+        if not _langfuse_warned:
+            _langfuse_warned = True
+            get_logger("observability").warning("langfuse_handler_unavailable", error=str(exc))
+        return None

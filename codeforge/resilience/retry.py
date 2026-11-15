@@ -11,47 +11,55 @@ class NonTransientError(Exception):
     """Raised for permanent client or validation errors that must fail fast."""
 
 
-def is_transient(exc: Exception) -> bool:
-    """Classifies exceptions as transient (retryable) vs permanent (fail fast).
-    Transient: HTTP 429, 500, 502, 503, 504, connection reset, timeout.
-    Permanent: 400, 401 (auth), 403, 404, schema validation errors.
+_TRANSIENT_CLASS_NAMES = {
+    "ratelimiterror", "apitimeouterror", "apiconnectionerror", "internalservererror",
+    "timeoutexception", "readtimeout", "connecttimeout", "timeouterror", "connectionerror",
+    "transienterror", "serviceunavailableerror", "connectionreseterror", "remoteprotocolerror",
+}
+_PERMANENT_CLASS_NAMES = {
+    "authenticationerror", "permissiondeniederror", "badrequesterror", "notfounderror",
+    "unprocessableentityerror", "validationerror", "syntaxerror", "nontransienterror",
+    "llmconfigerror",
+}
+_TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+# Status codes in messages only count in recognisable positions ("Error code: 429", "HTTP 503",
+# or a leading code) so text like "failed on 500 rows" is not misread as a server error.
+_STATUS_IN_MESSAGE = re.compile(
+    r"(?:^\s*|error code:?\s*|status(?: code)?:?\s*|http\s*)(429|5\d\d)\b", re.IGNORECASE
+)
+_TRANSIENT_KEYWORDS = (
+    "rate limit", "timed out", "timeout", "connection reset", "connection error",
+    "service unavailable", "overloaded",
+)
+
+
+def is_transient(exc: BaseException) -> bool:
+    """Classify an exception as transient (retry) vs permanent (fail fast).
+
+    Order: exception class -> status_code attribute -> message patterns.
+    Transient: 429, 500/502/503/504, timeouts, connection resets.
+    Permanent: auth, bad request, validation, config errors, any other 4xx.
     """
-    exc_str = str(exc).lower()
-    exc_type = type(exc).__name__.lower()
-
-    # Permanent error checks
-    if any(k in exc_str or k in exc_type for k in ["401", "unauthorized", "invalid_api_key", "forbidden", "403"]):
+    names = {c.__name__.lower() for c in type(exc).__mro__}
+    if names & _PERMANENT_CLASS_NAMES:
         return False
-    if "validationerror" in exc_type or "syntaxerror" in exc_type:
-        return False
-
-    # Transient error checks
-    transient_indicators = [
-        "429",
-        "rate limit",
-        "500",
-        "502",
-        "503",
-        "504",
-        "timeout",
-        "timed out",
-        "connection reset",
-        "connection error",
-        "service unavailable",
-        "overloaded",
-    ]
-    if any(k in exc_str or k in exc_type for k in transient_indicators):
+    if names & _TRANSIENT_CLASS_NAMES:
         return True
 
-    # Check status_code attribute if present
     status_code = getattr(exc, "status_code", None)
-    if status_code is not None:
-        if status_code in (429, 500, 502, 503, 504):
+    if isinstance(status_code, int):
+        if status_code in _TRANSIENT_STATUS:
             return True
         if 400 <= status_code < 500:
             return False
 
-    return False
+    msg = str(exc)
+    low = msg.lower()
+    if any(k in low for k in ("401", "unauthorized", "invalid_api_key", "forbidden", "403")):
+        return False
+    if _STATUS_IN_MESSAGE.search(msg):
+        return True
+    return any(k in low for k in _TRANSIENT_KEYWORDS)
 
 
 def get_retry_after(exc: Exception) -> float | None:
