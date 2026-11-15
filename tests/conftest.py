@@ -15,6 +15,9 @@ def _isolated_storage(tmp_path, monkeypatch):
     monkeypatch.setenv("FALLBACK_API_KEY", "")
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
+    monkeypatch.setenv("CHAOS_FAILURE_RATE", "0")  # tests that want chaos opt in explicitly
+    monkeypatch.setenv("TOTAL_OUTAGE", "false")
+    monkeypatch.setenv("CODEFORGE_PROFILE", "student_a")
     from codeforge.config import clear_settings_cache
     from codeforge.llm import clear_llm_cache, reset_breakers
 

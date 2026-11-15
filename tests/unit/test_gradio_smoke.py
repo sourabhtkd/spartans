@@ -28,9 +28,9 @@ def test_student_cannot_use_reviewer_or_chaos_controls():
 
 
 def test_instructor_can_set_chaos_and_profile_switch_hides_reviewer_tab(as_profile, monkeypatch):
+    monkeypatch.setenv("CHAOS_FAILURE_RATE", "0")  # restored by monkeypatch at teardown
     as_profile("instructor")
     assert "set to 50%" in ui.set_chaos(0.5)
-    monkeypatch.delenv("CHAOS_FAILURE_RATE", raising=False)
     badge, tab_update = ui.update_profile("student_a")
     assert "student" in badge and tab_update["visible"] is False
     badge, tab_update = ui.update_profile("instructor")
