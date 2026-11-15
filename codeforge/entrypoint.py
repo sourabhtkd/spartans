@@ -11,8 +11,8 @@ from typing import Any
 import structlog
 
 from codeforge.config import current_identity
-from codeforge.guard.pii import mask_obj, mask_text
 from codeforge.observability import current_request_id
+from codeforge.privacy.pii import mask_obj, mask_text
 
 
 @dataclass
@@ -48,7 +48,7 @@ def submit(
     config = {"configurable": {"thread_id": tid}}
     initial: dict[str, Any] = {
         "thread_id": tid,
-        "raw_request_masked": mask_text(raw_text),
+        "request_masked": mask_text(raw_text),
     }
     if history:
         initial["history"] = mask_obj(history)

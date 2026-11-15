@@ -4,7 +4,7 @@ from typing import Any, Literal
 
 from codeforge.agents.context import load_prompt, request_with_context
 from codeforge.llm import AllModelsDown, resilient_invoke
-from codeforge.state import CodeForgeState, RouteDecision, merge_tier
+from codeforge.state import CodeForgeState, RouteDecision, worst_tier
 
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "router.md"
 
@@ -14,14 +14,14 @@ class RouterAgent:
         self.system_prompt = load_prompt("router")
 
     def __call__(self, state: CodeForgeState) -> dict[str, Any]:
-        req_text = state.get("raw_request_masked", "")
+        req_text = state.get("request_masked", "")
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": request_with_context(state)},
         ]
         try:
             decision, tier = resilient_invoke("router", messages, RouteDecision)
-            return {"route": decision, "served_tier": merge_tier(state.get("served_tier"), tier)}
+            return {"route": decision, "served_by": worst_tier(state.get("served_by"), tier)}
         except AllModelsDown:  # fallback to keyword router on model outage
             # Plain-Python keyword routing during outages: SQL signals, clearly-non-code signals, else python.
             lowered = req_text.lower()
@@ -39,4 +39,4 @@ class RouterAgent:
             default_route = RouteDecision(
                 kind=kind, language={"python_function": "python", "sql": "sql", "other": "none"}[kind], confidence=0.7
             )
-            return {"route": default_route, "served_tier": merge_tier(state.get("served_tier"), "template")}
+            return {"route": default_route, "served_by": worst_tier(state.get("served_by"), "template")}

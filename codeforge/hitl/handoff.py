@@ -60,7 +60,7 @@ def create_ticket(
     last_failing = run_res.last_failing_test if run_res else None
 
     # Masked request only — prevents secret/Aadhaar leakage
-    req_masked = state.get("raw_request_masked", "")
+    req_masked = state.get("request_masked", "")
     attempts = state.get("attempts", 0)
 
     ticket = HandoffTicket(

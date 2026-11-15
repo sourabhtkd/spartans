@@ -58,7 +58,7 @@ def test_graph_end_to_end_passing(fake_llm: FakeLLM):
     thread_id = "test_th_pass"
     config = {"configurable": {"thread_id": thread_id}}
     initial_state = {
-        "raw_request_masked": "Write a palindrome function",
+        "request_masked": "Write a palindrome function",
         "thread_id": thread_id,
     }
 
@@ -83,7 +83,7 @@ def test_graph_policy_denied(fake_llm: FakeLLM):
     thread_id = "test_th_deny"
     config = {"configurable": {"thread_id": thread_id}}
     initial_state = {
-        "raw_request_masked": "Delete /tmp/foo",
+        "request_masked": "Delete /tmp/foo",
         "thread_id": thread_id,
     }
 
@@ -128,7 +128,7 @@ def test_graph_interrupt_and_resume(fake_llm: FakeLLM, as_profile):
     thread_id = "test_th_approval"
     config = {"configurable": {"thread_id": thread_id}}
     initial_state = {
-        "raw_request_masked": "Write to file",
+        "request_masked": "Write to file",
         "thread_id": thread_id,
     }
 

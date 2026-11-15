@@ -17,7 +17,7 @@
 ---
 
 ### Execution Metadata
-- **Model Tier**: `{{ served_tier }}`
+- **Model Tier**: `{{ served_by }}`
 - **Execution Engine**: Sandboxed Pytest (rlimits + network-blocked)
 {% if run_result and run_result.exit_code is not none %}
 - **Exit Code**: `{{ run_result.exit_code }}`

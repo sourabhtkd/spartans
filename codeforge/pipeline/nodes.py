@@ -9,18 +9,18 @@ from typing import Any
 
 from codeforge.agents.codegen import CodeGenAgent
 from codeforge.agents.evaluator import EvaluatorAgent
+from codeforge.agents.history import compact_history, llm_summarize
 from codeforge.agents.requirements import RequirementsAgent
 from codeforge.agents.router import RouterAgent
 from codeforge.agents.test_validator import TestValidator
 from codeforge.agents.testgen import TestGenAgent
 from codeforge.config import current_identity, get_settings
-from codeforge.cost.compaction import compact_history, llm_summarize
 from codeforge.cost.semantic_cache import get_semantic_cache
-from codeforge.guard.pii import mask_text
 from codeforge.hitl.approval import human_approval_node  # noqa: F401 - re-exported for builder.py
 from codeforge.hitl.handoff import create_ticket, should_escalate
 from codeforge.observability import get_logger
 from codeforge.policy.code_policy import evaluate_code_policy
+from codeforge.privacy.pii import mask_text
 from codeforge.report import render_report
 from codeforge.sandbox.runner import run_pytest_sandboxed
 from codeforge.state import CodeForgeState, PolicyDecision, RunResult
@@ -39,7 +39,7 @@ def _compacted_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
-    raw_req = state.get("raw_request_masked", "")
+    raw_req = state.get("request_masked", "")
     masked_req = mask_text(raw_req)
     # Identity is ALWAYS read from config, never from graph input.
     identity = current_identity()
@@ -49,7 +49,7 @@ def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
         store.check_and_increment_quota()
     except QuotaExceeded as e:
         return {
-            "raw_request_masked": masked_req,
+            "request_masked": masked_req,
             "identity": identity,
             "quota_exceeded": True,
             "report": f"❌ Quota Exceeded: {e}",
@@ -63,13 +63,13 @@ def ingress_guard(state: CodeForgeState) -> dict[str, Any]:
     ticket = None
     if should_esc:
         ticket = create_ticket(
-            {"raw_request_masked": masked_req, "identity": identity},
+            {"request_masked": masked_req, "identity": identity},
             priority=prio,
             reason=reason,
         )
 
     return {
-        "raw_request_masked": masked_req,
+        "request_masked": masked_req,
         "history": history,
         "identity": identity,
         "ticket": ticket,
@@ -83,7 +83,7 @@ def cache_lookup(state: CodeForgeState) -> dict[str, Any]:
     try:
         cache = get_semantic_cache()
         entry = cache.lookup(
-            state.get("raw_request_masked", ""),
+            state.get("request_masked", ""),
             context_free=not state.get("history"),
             role=current_identity().role,
         )
@@ -92,7 +92,7 @@ def cache_lookup(state: CodeForgeState) -> dict[str, Any]:
                 "code": entry["code"],
                 "tests": entry["tests"],
                 "cache_hit": True,
-                "served_tier": "cache",
+                "served_by": "cache",
             }
     except Exception as e:  # noqa: BLE001
         logger.debug("cache_lookup_miss_or_error", error=str(e))
@@ -152,7 +152,7 @@ def sandbox_run_node(state: CodeForgeState) -> dict[str, Any]:
 
     thread_id = state.get("thread_id", "run")
     run_id = f"{thread_id}_{idem_key[:8]}"
-    if not store.claim(run_id, idem_key, state.get("raw_request_masked", ""), code, tests):
+    if not store.claim_execution(run_id, idem_key, state.get("request_masked", ""), code, tests):
         # Another worker owns this exact run: wait for its result, never execute twice.
         waited = store.wait_for_result(idem_key, max_wait_s=timeout_s + 5)
         if waited is None:
@@ -163,7 +163,7 @@ def sandbox_run_node(state: CodeForgeState) -> dict[str, Any]:
         return {"run_result": waited, "idempotency_key": idem_key}
 
     result = run_pytest_sandboxed(code, tests, timeout_s=timeout_s)
-    store.complete(idem_key, result)
+    store.finish_execution(idem_key, result)
     return {"run_result": result, "idempotency_key": idem_key}
 
 
@@ -174,7 +174,7 @@ def cache_store_node(state: CodeForgeState) -> dict[str, Any]:
     if passed and not state.get("history"):
         try:
             get_semantic_cache().store(
-                request_text=state.get("raw_request_masked", ""),
+                request_text=state.get("request_masked", ""),
                 code=state.get("code", ""),
                 tests=state.get("tests", ""),
                 role=current_identity().role,
@@ -193,7 +193,7 @@ def escalate_check_node(state: CodeForgeState) -> dict[str, Any]:
     if state.get("ticket"):
         return {}
 
-    if state.get("served_tier") == "refused":
+    if state.get("served_by") == "refused":
         ticket = create_ticket(
             state, priority="P2", reason="CodeForge cannot generate code right now (model outage, no template)"
         )
@@ -202,7 +202,7 @@ def escalate_check_node(state: CodeForgeState) -> dict[str, Any]:
         ticket = create_ticket(state, priority="P2", reason=state["escalate_reason"])
         return {"ticket": ticket}
 
-    req_text = state.get("raw_request_masked", "")
+    req_text = state.get("request_masked", "")
     policy = state.get("policy")
     policy_denials = 0
     if policy and policy.verdict == "deny":

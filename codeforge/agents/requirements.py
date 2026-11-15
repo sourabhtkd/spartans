@@ -3,7 +3,7 @@ from typing import Any
 
 from codeforge.agents.context import load_prompt, request_with_context
 from codeforge.llm import AllModelsDown, resilient_invoke
-from codeforge.state import CodeForgeState, Requirements, merge_tier
+from codeforge.state import CodeForgeState, Requirements, worst_tier
 
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "requirements.md"
 
@@ -13,14 +13,14 @@ class RequirementsAgent:
         self.system_prompt = load_prompt("requirements")
 
     def __call__(self, state: CodeForgeState) -> dict[str, Any]:
-        req_text = state.get("raw_request_masked", "")
+        req_text = state.get("request_masked", "")
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": request_with_context(state)},
         ]
         try:
             requirements, tier = resilient_invoke("requirements", messages, Requirements)
-            return {"requirements": requirements, "served_tier": merge_tier(state.get("served_tier"), tier)}
+            return {"requirements": requirements, "served_by": worst_tier(state.get("served_by"), tier)}
         except AllModelsDown:
             from codeforge.resilience.templates import match_template
 
@@ -28,5 +28,5 @@ class RequirementsAgent:
             fn_name = tpl.name if tpl else "solve"
             return {
                 "requirements": Requirements(function_name=fn_name, description=fn_name),
-                "served_tier": merge_tier(state.get("served_tier"), "template" if tpl else "refused"),
+                "served_by": worst_tier(state.get("served_by"), "template" if tpl else "refused"),
             }

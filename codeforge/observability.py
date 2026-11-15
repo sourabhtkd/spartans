@@ -6,7 +6,7 @@ from typing import Any
 import structlog
 
 from codeforge.config import get_settings
-from codeforge.guard.pii import mask_obj
+from codeforge.privacy.pii import mask_obj
 
 
 def mask_processor(

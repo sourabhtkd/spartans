@@ -17,8 +17,8 @@ def node_facts(output: dict[str, Any]) -> dict[str, Any]:
     facts: dict[str, Any] = {}
     if output.get("policy") is not None:
         facts["policy_verdict"] = output["policy"].verdict
-    if "served_tier" in output:
-        facts["served_tier"] = output["served_tier"]
+    if "served_by" in output:
+        facts["served_by"] = output["served_by"]
     if "cache_hit" in output:
         facts["cache_hit"] = output["cache_hit"]
     if output.get("run_result") is not None:

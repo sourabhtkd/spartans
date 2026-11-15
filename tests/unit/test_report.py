@@ -64,7 +64,7 @@ def test_report_includes_metadata_and_ticket():
     res = RunResult(exit_code=0, passed=2, failed=0, cached=True)
     state: CodeForgeState = {
         "run_result": res,
-        "served_tier": "template",
+        "served_by": "template",
         "cache_hit": True,
         "ticket": ticket,
         "code": "def foo(): pass",

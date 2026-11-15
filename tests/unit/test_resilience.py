@@ -118,20 +118,20 @@ def test_outage_template_vs_unknown_task(monkeypatch: pytest.MonkeyPatch):
 
     # 1. Template task during total outage -> serves template & passes sandbox tests!
     res_tpl = graph.invoke(
-        {"raw_request_masked": "Write an is_palindrome function", "thread_id": "outage_tpl"},
+        {"request_masked": "Write an is_palindrome function", "thread_id": "outage_tpl"},
         config={"configurable": {"thread_id": "outage_tpl"}},
     )
-    assert res_tpl.get("served_tier") == "template"
+    assert res_tpl.get("served_by") == "template"
     assert res_tpl.get("run_result") is not None
     assert res_tpl.get("run_result").exit_code == 0
     assert "✅ Tests passed" in res_tpl.get("report", "")
 
     # 2. Unknown task during total outage -> honest refusal + support ticket!
     res_unknown = graph.invoke(
-        {"raw_request_masked": "Implement advanced ray tracing BVH algorithm", "thread_id": "outage_unknown"},
+        {"request_masked": "Implement advanced ray tracing BVH algorithm", "thread_id": "outage_unknown"},
         config={"configurable": {"thread_id": "outage_unknown"}},
     )
-    assert res_unknown.get("served_tier") == "refused"
+    assert res_unknown.get("served_by") == "refused"
     assert "cannot generate code right now" in res_unknown.get("report", "")
     assert res_unknown.get("ticket") is not None
 

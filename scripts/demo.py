@@ -12,9 +12,9 @@ import time
 from typing import Any
 
 from codeforge.entrypoint import submit
-from codeforge.guard.pii import mask_text
 from codeforge.pipeline import build_graph
 from codeforge.policy.code_policy import evaluate_code_policy
+from codeforge.privacy.pii import mask_text
 from codeforge.state import (
     GeneratedCode,
     GeneratedTests,
@@ -189,12 +189,12 @@ def incident_4_chaos_resilience() -> None:
     rows = run_requests(TEMPLATE_TASKS[:3], rate=0.6, seed=11, offline=offline)
     for r in rows:
         print(
-            f"  {r.prompt[:42]:<42} tier={Colors.BOLD}{r.served_tier:<9}{Colors.END} "
+            f"  {r.prompt[:42]:<42} tier={Colors.BOLD}{r.served_by:<9}{Colors.END} "
             f"injected_failures={r.injected_failures:<3} tests_passed={r.tests_passed}"
         )
     print(f"\n{Colors.YELLOW}Total outage{Colors.END} (every model call fails):")
     for r in run_requests([TEMPLATE_TASKS[0], UNKNOWN_TASKS[0]], 0.0, 1, offline, outage=True):
-        print(f"  {r.prompt[:46]:<46} tier={Colors.BOLD}{r.served_tier:<9}{Colors.END} ticket={r.ticket or '-'}")
+        print(f"  {r.prompt[:46]:<46} tier={Colors.BOLD}{r.served_by:<9}{Colors.END} ticket={r.ticket or '-'}")
     print(f"  {Colors.GREEN}✓ Template task still answered; unknown task refused honestly + ticket, never invented code.{Colors.END}")
 
 

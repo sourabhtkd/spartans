@@ -3,7 +3,7 @@ from typing import Any
 
 from codeforge.agents.context import load_prompt
 from codeforge.llm import AllModelsDown, resilient_invoke
-from codeforge.state import CodeForgeState, GeneratedCode, merge_tier
+from codeforge.state import CodeForgeState, GeneratedCode, worst_tier
 
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "codegen.md"
 
@@ -37,21 +37,21 @@ class CodeGenAgent:
             return {
                 "code": generated.code,
                 "attempts": attempts + 1,
-                "served_tier": merge_tier(state.get("served_tier"), tier),
+                "served_by": worst_tier(state.get("served_by"), tier),
             }
         except AllModelsDown:
             from codeforge.resilience.templates import match_template
 
-            search_text = f"{reqs.function_name if reqs else ''} {state.get('raw_request_masked', '')}"
+            search_text = f"{reqs.function_name if reqs else ''} {state.get('request_masked', '')}"
             tpl = match_template(search_text)
             if tpl:
                 return {
                     "code": tpl.code,
                     "attempts": attempts + 1,
-                    "served_tier": merge_tier(state.get("served_tier"), "template"),
+                    "served_by": worst_tier(state.get("served_by"), "template"),
                 }
             return {
                 "code": "",
                 "attempts": attempts + 1,
-                "served_tier": merge_tier(state.get("served_tier"), "refused"),
+                "served_by": worst_tier(state.get("served_by"), "refused"),
             }

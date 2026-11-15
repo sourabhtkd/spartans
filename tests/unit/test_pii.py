@@ -1,4 +1,4 @@
-from codeforge.guard.pii import (
+from codeforge.privacy.pii import (
     generate_verhoeff_check_digit,
     is_luhn_valid,
     is_verhoeff_valid,

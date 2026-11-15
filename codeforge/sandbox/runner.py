@@ -8,7 +8,7 @@ import sys
 import tempfile
 from collections.abc import Callable
 
-from codeforge.guard.pii import mask_text
+from codeforge.privacy.pii import mask_text
 from codeforge.state import RunResult
 
 _SITECUSTOMIZE_CONTENT = """

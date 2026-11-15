@@ -4,9 +4,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from codeforge.agents.context import load_prompt
-from codeforge.guard.pii import mask_obj
 from codeforge.llm import AllModelsDown, resilient_invoke
-from codeforge.state import CodeForgeState, merge_tier
+from codeforge.privacy.pii import mask_obj
+from codeforge.state import CodeForgeState, worst_tier
 
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "evaluator.md"
 
@@ -37,7 +37,7 @@ class EvaluatorAgent:
             critique, tier = resilient_invoke("evaluator", messages, EvaluationCritique)
             source = "model"
             events.append({"stage": "evaluator_advisory", "source": source, "critique": mask_obj(critique.model_dump())})
-            return {"events": events, "served_tier": merge_tier(state.get("served_tier"), tier)}
+            return {"events": events, "served_by": worst_tier(state.get("served_by"), tier)}
         except AllModelsDown:
             # No model available: say so plainly instead of inventing a review.
             critique = EvaluationCritique(

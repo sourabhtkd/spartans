@@ -49,7 +49,7 @@ def test_outage_unknown_task_never_sandboxed(monkeypatch, sandbox_calls):
     assert sandbox_calls == []
     assert "cannot generate code right now" in res.values["report"]
     assert res.values["ticket"] is not None
-    assert res.values["served_tier"] == "refused"
+    assert res.values["served_by"] == "refused"
 
 
 def test_outage_template_task_still_runs(monkeypatch, sandbox_calls):
@@ -59,7 +59,7 @@ def test_outage_template_task_still_runs(monkeypatch, sandbox_calls):
     _patch(monkeypatch, down)
     res = submit("Write a palindrome function", graph=_graph())
     assert "✅ Tests passed" in res.values["report"]
-    assert res.values["served_tier"] == "template"
+    assert res.values["served_by"] == "template"
 
 
 def test_invalid_tests_never_reach_sandbox(monkeypatch, sandbox_calls):

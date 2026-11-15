@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from codeforge.cost.compaction import compact_history
+from codeforge.agents.history import compact_history
 from codeforge.cost.semantic_cache import SemanticCache, extract_guard_tokens
 from codeforge.store.db import init_db
 

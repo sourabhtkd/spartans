@@ -4,8 +4,8 @@ from pathlib import Path
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from codeforge.entrypoint import submit
-from codeforge.guard.pii import generate_verhoeff_check_digit
 from codeforge.pipeline import build_graph
+from codeforge.privacy.pii import generate_verhoeff_check_digit
 from codeforge.state import GeneratedCode, GeneratedTests, Requirements, RouteDecision
 from tests.fakes import FakeLLM
 

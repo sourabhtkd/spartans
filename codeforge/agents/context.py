@@ -14,7 +14,7 @@ def load_prompt(name: str) -> str:
 
 def request_with_context(state: CodeForgeState) -> str:
     """The (masked) request, prefixed by compacted conversation history when there is any."""
-    req = state.get("raw_request_masked", "")
+    req = state.get("request_masked", "")
     history = state.get("history") or []
     if not history:
         return req

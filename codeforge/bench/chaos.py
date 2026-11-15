@@ -36,7 +36,7 @@ ANSWER_TIERS = {"primary", "fallback", "template", "cache"}
 class RequestRow:
     idx: int
     prompt: str
-    served_tier: str
+    served_by: str
     injected_failures: int
     tests_passed: bool
     ticket: str
@@ -98,7 +98,7 @@ def isolated_run(rate: float, outage: bool, seed: int, offline: bool, fast: bool
 
 def is_answered(values: dict[str, Any]) -> bool:
     """Answered = code+tests delivered with a known serving tier, OR an honest refusal with a ticket."""
-    tier = values.get("served_tier", "")
+    tier = values.get("served_by", "")
     if tier in ANSWER_TIERS:
         return bool(values.get("code")) and bool(values.get("tests")) and values.get("run_result") is not None
     if tier == "refused":
@@ -121,7 +121,7 @@ def run_requests(
                 RequestRow(
                     idx=i,
                     prompt=prompt,
-                    served_tier=vals.get("served_tier", "?"),
+                    served_by=vals.get("served_by", "?"),
                     injected_failures=counter["injected"] - before,
                     tests_passed=bool(res and res.exit_code == 0 and not res.timed_out),
                     ticket=ticket.ticket_id if ticket else "",
@@ -135,7 +135,7 @@ def run_requests(
 def tier_distribution(rows: list[RequestRow]) -> dict[str, int]:
     dist: dict[str, int] = {}
     for r in rows:
-        dist[r.served_tier] = dist.get(r.served_tier, 0) + 1
+        dist[r.served_by] = dist.get(r.served_by, 0) + 1
     return dist
 
 
@@ -155,7 +155,7 @@ def render_report(chaos: list[RequestRow], outage: list[RequestRow], meta: dict[
     ]
     for r in chaos:
         lines.append(
-            f"| {r.idx} | {r.prompt} | `{r.served_tier}` | {r.injected_failures} | "
+            f"| {r.idx} | {r.prompt} | `{r.served_by}` | {r.injected_failures} | "
             f"{'✅' if r.tests_passed else '—'} | {r.ticket or '—'} | {'✅' if r.answered else '❌'} |"
         )
     dist = ", ".join(f"{k}={v}" for k, v in sorted(tier_distribution(chaos).items()))
@@ -171,11 +171,11 @@ def render_report(chaos: list[RequestRow], outage: list[RequestRow], meta: dict[
     ]
     for r in outage:
         lines.append(
-            f"| {r.idx} | {r.prompt} | `{r.served_tier}` | {'✅' if r.tests_passed else '—'} | "
+            f"| {r.idx} | {r.prompt} | `{r.served_by}` | {'✅' if r.tests_passed else '—'} | "
             f"{r.ticket or '—'} | {'✅' if r.answered else '❌'} |"
         )
     tpl_ok = all(r.tests_passed for r in outage if r.prompt in TEMPLATE_TASKS)
-    unk_ok = all(r.served_tier == "refused" and r.ticket for r in outage if r.prompt in UNKNOWN_TASKS)
+    unk_ok = all(r.served_by == "refused" and r.ticket for r in outage if r.prompt in UNKNOWN_TASKS)
     lines += [
         "",
         f"- Template tasks return code + passing tests during outage: **{'YES' if tpl_ok else 'NO'}**",

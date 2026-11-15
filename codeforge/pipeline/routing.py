@@ -29,7 +29,7 @@ def route_after_cache(state: CodeForgeState) -> Literal["test_validator", "route
 def route_after_codegen(
     state: CodeForgeState,
 ) -> Literal["testgen", "policy_gate", "escalate_check"]:
-    if not state.get("code", "").strip() or state.get("served_tier") == "refused":
+    if not state.get("code", "").strip() or state.get("served_by") == "refused":
         return "escalate_check"  # nothing to run: never sandbox empty code
     if state.get("tests_frozen"):
         return "policy_gate"  # repair loop: tests are frozen, only code changes
@@ -88,7 +88,7 @@ def route_after_sandbox(
     attempts = state.get("attempts", 0)
     if res and res.exit_code == 0 and not res.timed_out:
         # Review only fresh model output: cache hits and templates have nothing new to critique.
-        if state.get("served_tier") in ("primary", "fallback") and not state.get("cache_hit"):
+        if state.get("served_by") in ("primary", "fallback") and not state.get("cache_hit"):
             return "evaluator"
         return "cache_store"
     if attempts < MAX_REPAIR_ATTEMPTS:

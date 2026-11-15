@@ -34,8 +34,8 @@ def test_concurrent_identical_runs_execute_once(monkeypatch):
 
 def test_first_result_wins_and_claim_is_exclusive():
     store = RunStore()
-    assert store.claim("r1", "k", "req", "c", "t") is True
-    assert store.claim("r2", "k", "req", "c", "t") is False
-    store.complete("k", RunResult(exit_code=0, passed=1))
-    store.complete("k", RunResult(exit_code=1, failed=1))  # must not overwrite
+    assert store.claim_execution("r1", "k", "req", "c", "t") is True
+    assert store.claim_execution("r2", "k", "req", "c", "t") is False
+    store.finish_execution("k", RunResult(exit_code=0, passed=1))
+    store.finish_execution("k", RunResult(exit_code=1, failed=1))  # must not overwrite
     assert store.get_by_idem_key("k").exit_code == 0

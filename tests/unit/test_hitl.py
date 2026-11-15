@@ -1,7 +1,7 @@
 from codeforge.config import Identity
-from codeforge.guard.pii import mask_text
 from codeforge.hitl.approval import human_approval_node
 from codeforge.hitl.handoff import create_ticket, should_escalate
+from codeforge.privacy.pii import mask_text
 from codeforge.state import ApprovalDecision, CodeForgeState, PolicyDecision
 from codeforge.store.db import init_db
 
@@ -39,7 +39,7 @@ def test_student_c_ticket_created_strictly_masked():
     masked_prompt = mask_text(raw_prompt)
 
     state: CodeForgeState = {
-        "raw_request_masked": masked_prompt,
+        "request_masked": masked_prompt,
         "attempts": 2,
     }
     esc, reason, prio = should_escalate(masked_prompt)

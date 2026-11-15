@@ -19,7 +19,7 @@ def test_total_outage_templates_pass_unknown_refused_with_ticket():
     rows = run_requests(TEMPLATE_TASKS + UNKNOWN_TASKS, rate=0.0, seed=1, offline=True, outage=True)
     by_prompt = {r.prompt: r for r in rows}
     for p in TEMPLATE_TASKS:
-        assert by_prompt[p].served_tier == "template" and by_prompt[p].tests_passed
+        assert by_prompt[p].served_by == "template" and by_prompt[p].tests_passed
     for p in UNKNOWN_TASKS:
-        assert by_prompt[p].served_tier == "refused" and by_prompt[p].ticket
+        assert by_prompt[p].served_by == "refused" and by_prompt[p].ticket
         assert not by_prompt[p].tests_passed  # never invented code

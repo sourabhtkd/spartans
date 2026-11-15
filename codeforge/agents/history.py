@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from codeforge.guard.pii import mask_text
+from codeforge.privacy.pii import mask_text
 
 
 def _deterministic_summary(older: list[dict[str, Any]]) -> str:

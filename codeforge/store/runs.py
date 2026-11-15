@@ -104,7 +104,7 @@ class RunStore:
                 return RunResult.model_validate_json(run.result_json).model_copy(update={"cached": True})
             return None
 
-    def claim(
+    def claim_execution(
         self,
         run_id: str,
         idem_key: str,
@@ -147,7 +147,7 @@ class RunStore:
             session.commit()
             return taken == 1
 
-    def complete(self, idem_key: str, result: RunResult) -> None:
+    def finish_execution(self, idem_key: str, result: RunResult) -> None:
         """Marks a claimed run as done. Never overwrites an already-done result."""
         with self.session_factory() as session:
             session.query(Run).filter(Run.idem_key == idem_key, Run.status == "running").update(

@@ -4,8 +4,8 @@ import pytest
 import yaml
 
 from codeforge.config import current_identity
-from codeforge.guard.pii import mask_text
 from codeforge.policy.code_policy import evaluate_code_policy
+from codeforge.privacy.pii import mask_text
 
 CORPUS_PATH = Path(__file__).resolve().parent.parent.parent / "redteam" / "corpus.yaml"
 CASES = yaml.safe_load(CORPUS_PATH.read_text(encoding="utf-8"))

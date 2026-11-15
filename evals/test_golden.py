@@ -20,10 +20,10 @@ from codeforge.agents.requirements import RequirementsAgent
 from codeforge.agents.router import RouterAgent
 from codeforge.config import Identity, current_identity
 from codeforge.entrypoint import submit
-from codeforge.guard.pii import mask_text
 from codeforge.hitl.approval import expire_stale, human_approval_node, resume_approval
 from codeforge.hitl.handoff import create_ticket, should_escalate
 from codeforge.policy.code_policy import evaluate_code_policy
+from codeforge.privacy.pii import mask_text
 from codeforge.report import render_report
 from codeforge.sandbox.runner import run_pytest_sandboxed
 from codeforge.state import RunResult
@@ -69,18 +69,18 @@ def _risky_graph(env: Env) -> Any:
 
 
 # ---------------------------------------------------------------- HARD handlers
-def h_identity_spoof(case: dict, env: Env) -> None:
+def check_identity_spoof(case: dict, env: Env) -> None:
     assert current_identity().role == "student"
 
 
-def h_identity_spoof_graph(case: dict, env: Env) -> None:
+def check_identity_spoof_graph(case: dict, env: Env) -> None:
     patch_llm(env.mp, scripted_fake(FIXED))
     res = submit(case["input"], graph=memory_graph())
     assert res.values["identity"].role == "student"
     assert res.values["identity"].user_id == "u_alice"
 
 
-def h_cross_user_read(case: dict, env: Env) -> None:
+def check_cross_user_read(case: dict, env: Env) -> None:
     db = init_db("sqlite:///:memory:")
     alice = RunStore(db, lambda: Identity(user_id="u_alice", role="student"))
     bob = RunStore(db, lambda: Identity(user_id="u_bob", role="student"))
@@ -92,27 +92,27 @@ def h_cross_user_read(case: dict, env: Env) -> None:
     assert str(exc_missing.value) == case["expect"] == str(exc_unknown.value)  # "missing" == "not yours"
 
 
-def h_pii(case: dict, env: Env) -> None:
+def check_pii(case: dict, env: Env) -> None:
     assert case["expect"] in mask_text(case["input"])
 
 
-def h_pii_negative(case: dict, env: Env) -> None:
+def check_pii_negative(case: dict, env: Env) -> None:
     assert case["expect"] in mask_text(case["input"])
 
 
-def h_policy(verdict: str) -> Any:
+def check_policy(verdict: str) -> Any:
     def handler(case: dict, env: Env) -> None:
         assert evaluate_code_policy(case["input"]).verdict == verdict
 
     return handler
 
 
-def h_timeout(case: dict, env: Env) -> None:
+def check_timeout(case: dict, env: Env) -> None:
     res = run_pytest_sandboxed(case["input"], "from solution import infinite\ndef test_inf(): infinite()", timeout_s=2)
     assert res.timed_out is True and res.exit_code is None
 
 
-def h_idempotency(case: dict, env: Env) -> None:
+def check_idempotency(case: dict, env: Env) -> None:
     store = RunStore(init_db("sqlite:///:memory:"), lambda: Identity(user_id="u_alice", role="student"))
     key = compute_idempotency_key("u_alice", "code", "tests")
     store.save_run("r1", key, "req", "code", "tests", RunResult(exit_code=0, passed=2))
@@ -121,7 +121,7 @@ def h_idempotency(case: dict, env: Env) -> None:
     assert cached is not None and cached.cached is True and cached.exit_code == 0
 
 
-def h_concurrent_idempotent(case: dict, env: Env) -> None:
+def check_concurrent_idempotent(case: dict, env: Env) -> None:
     calls: list[int] = []
 
     def slow(code: str, tests: str, timeout_s: int = 10, **_: Any) -> RunResult:
@@ -137,13 +137,13 @@ def h_concurrent_idempotent(case: dict, env: Env) -> None:
     assert len(calls) == 1
 
 
-def h_report_honesty(case: dict, env: Env) -> None:
+def check_report_honesty(case: dict, env: Env) -> None:
     rep = render_report({"run_result": RunResult(exit_code=1, failed=1, last_failing_test="test_x")})
     assert "Tests passed" not in rep and "❌ Tests failed" in rep
     assert "Tests passed" not in render_report({"run_result": RunResult(exit_code=None, timed_out=True)})
 
 
-def h_approval_pause(case: dict, env: Env) -> None:
+def check_approval_pause(case: dict, env: Env) -> None:
     approver = "u_bob" if case["expect"] == "rejected_role" else "u_prof"
     requester = Identity(user_id="u_alice", role="student") if approver == "u_bob" else Identity(user_id="u_prof", role="instructor")
     env.mp.setattr("codeforge.hitl.approval.interrupt", lambda payload: {"approved": True, "approver_id": approver})
@@ -151,7 +151,7 @@ def h_approval_pause(case: dict, env: Env) -> None:
     assert res["approval"].approved is False
 
 
-def h_student_cannot_resume(case: dict, env: Env) -> None:
+def check_student_cannot_resume(case: dict, env: Env) -> None:
     calls = sandbox_spy(env.mp)
     graph = _risky_graph(env)
     assert submit("Write w", thread_id="g1", graph=graph).pending_approval
@@ -160,7 +160,7 @@ def h_student_cannot_resume(case: dict, env: Env) -> None:
     assert calls == []
 
 
-def h_instructor_resume(case: dict, env: Env) -> None:
+def check_instructor_resume(case: dict, env: Env) -> None:
     calls = sandbox_spy(env.mp)
     graph = _risky_graph(env)
     submit("Write w", thread_id="g2", graph=graph)
@@ -170,7 +170,7 @@ def h_instructor_resume(case: dict, env: Env) -> None:
     assert len(calls) == 1
 
 
-def h_approval_expiry(case: dict, env: Env) -> None:
+def check_approval_expiry(case: dict, env: Env) -> None:
     from datetime import UTC, datetime, timedelta
 
     calls = sandbox_spy(env.mp)
@@ -181,7 +181,7 @@ def h_approval_expiry(case: dict, env: Env) -> None:
     assert graph.get_state({"configurable": {"thread_id": "g3"}}).values["approval"].approved is False
 
 
-def h_quota(case: dict, env: Env) -> None:
+def check_quota(case: dict, env: Env) -> None:
     store = RunStore(init_db("sqlite:///:memory:"), lambda: Identity(user_id="u_alice", role="student"))
     for i in range(20):
         store.save_run(f"r{i}", f"k{i}", "req", "c", "t", RunResult(exit_code=0))
@@ -189,51 +189,51 @@ def h_quota(case: dict, env: Env) -> None:
         store.check_and_increment_quota()
 
 
-def h_escalation(case: dict, env: Env) -> None:
+def check_escalation(case: dict, env: Env) -> None:
     if case["expect"] == "P1":
         esc, _, prio = should_escalate(case["input"])
         assert esc and prio == "P1"
     else:  # ticket_masked
-        tkt = create_ticket({"raw_request_masked": mask_text(case["input"])}, init_db("sqlite:///:memory:"))
+        tkt = create_ticket({"request_masked": mask_text(case["input"])}, init_db("sqlite:///:memory:"))
         assert "sk-" not in tkt.request_masked and "[SECRET]" in tkt.request_masked
 
 
-def h_escalation_negative(case: dict, env: Env) -> None:
+def check_escalation_negative(case: dict, env: Env) -> None:
     assert should_escalate(case["input"])[0] is False
 
 
-def h_escalation_positive(case: dict, env: Env) -> None:
+def check_escalation_positive(case: dict, env: Env) -> None:
     assert should_escalate(case["input"])[0] is True
 
 
-def h_outage_template(case: dict, env: Env) -> None:
+def check_outage_template(case: dict, env: Env) -> None:
     outage(env.mp)
     res = submit(case["input"], graph=memory_graph())
-    assert res.values["served_tier"] == "template"
+    assert res.values["served_by"] == "template"
     assert res.values["run_result"].exit_code == 0
 
 
-def h_outage_unknown(case: dict, env: Env) -> None:
+def check_outage_unknown(case: dict, env: Env) -> None:
     calls = sandbox_spy(env.mp)
     outage(env.mp)
     res = submit(case["input"], graph=memory_graph())
-    assert res.values["served_tier"] == "refused" and res.values["ticket"] is not None
+    assert res.values["served_by"] == "refused" and res.values["ticket"] is not None
     assert "cannot generate code right now" in res.values["report"]
     assert calls == []
 
 
-def h_refused_never_executes(case: dict, env: Env) -> None:
-    h_outage_unknown(case, env)
+def check_refused_never_executes(case: dict, env: Env) -> None:
+    check_outage_unknown(case, env)
 
 
-def h_degraded_no_auto_approve(case: dict, env: Env) -> None:
+def check_degraded_no_auto_approve(case: dict, env: Env) -> None:
     calls = sandbox_spy(env.mp)
     outage(env.mp)
     res = submit(case["input"], graph=memory_graph())
     assert calls == [] and res.values.get("approval") is None and not res.pending_approval
 
 
-def h_checkpoint_no_pii(case: dict, env: Env) -> None:
+def check_checkpoint_no_pii(case: dict, env: Env) -> None:
     import sqlite3
 
     from langgraph.checkpoint.sqlite import SqliteSaver
@@ -250,7 +250,7 @@ def h_checkpoint_no_pii(case: dict, env: Env) -> None:
     assert b"sk-abcdefghijklmnop1234" not in raw and b"2345 6789 0124" not in raw and b"234567890124" not in raw
 
 
-def h_invalid_tests_never_run(case: dict, env: Env) -> None:
+def check_invalid_tests_never_run(case: dict, env: Env) -> None:
     calls = sandbox_spy(env.mp)
     weak = "from solution import f\ndef test_a():\n    assert f(1) == 2\n"
     patch_llm(env.mp, scripted_fake(FIXED, weak))
@@ -258,7 +258,7 @@ def h_invalid_tests_never_run(case: dict, env: Env) -> None:
     assert calls == [] and res.values["ticket"] is not None
 
 
-def h_student_c_graph(case: dict, env: Env) -> None:
+def check_student_c_graph(case: dict, env: Env) -> None:
     calls = sandbox_spy(env.mp)
     res = submit(case["input"], graph=memory_graph())
     t = res.values["ticket"]
@@ -266,7 +266,7 @@ def h_student_c_graph(case: dict, env: Env) -> None:
     assert calls == []
 
 
-def h_repeated_denial(case: dict, env: Env) -> None:
+def check_repeated_denial(case: dict, env: Env) -> None:
     patch_llm(env.mp, scripted_fake("import os\n\ndef f():\n    os.remove('x')\n"))
     graph = memory_graph()
     assert submit(case["input"], thread_id="d1", graph=graph).values.get("ticket") is None
@@ -274,7 +274,7 @@ def h_repeated_denial(case: dict, env: Env) -> None:
     assert second.values["ticket"] is not None
 
 
-def h_redteam_corpus(case: dict, env: Env) -> None:
+def check_redteam_corpus(case: dict, env: Env) -> None:
     corpus = yaml.safe_load((ROOT / "redteam" / "corpus.yaml").read_text(encoding="utf-8"))
     policy_cats = {"destructive", "obfuscation", "dunder_escape", "approval_required", "allowed_safe", "bypass"}
     for c in corpus:
@@ -288,13 +288,13 @@ def h_redteam_corpus(case: dict, env: Env) -> None:
             assert current_identity().role == "student"
 
 
-def h_cache_lookalike(case: dict, env: Env) -> None:
+def check_cache_lookalike(case: dict, env: Env) -> None:
     from codeforge.cost.semantic_cache import extract_guard_tokens
 
     assert extract_guard_tokens("sort list ascending") != extract_guard_tokens("sort list descending")
 
 
-def h_cache_lookalike_store(case: dict, env: Env) -> None:
+def check_cache_lookalike_store(case: dict, env: Env) -> None:
     from codeforge.cost.semantic_cache import SemanticCache
 
     cache = SemanticCache(session_factory=init_db("sqlite:///:memory:"))
@@ -305,19 +305,19 @@ def h_cache_lookalike_store(case: dict, env: Env) -> None:
 
 
 # ---------------------------------------------------------------- SOFT handlers
-def h_routing_fallback(case: dict, env: Env) -> None:
+def check_routing_fallback(case: dict, env: Env) -> None:
     outage(env.mp)
-    route = RouterAgent()({"raw_request_masked": case["input"]})["route"]
+    route = RouterAgent()({"request_masked": case["input"]})["route"]
     assert route.kind == case["expect"]
 
 
-def h_requirements_fallback(case: dict, env: Env) -> None:
+def check_requirements_fallback(case: dict, env: Env) -> None:
     outage(env.mp)
-    reqs = RequirementsAgent()({"raw_request_masked": case["input"]})["requirements"]
+    reqs = RequirementsAgent()({"request_masked": case["input"]})["requirements"]
     assert reqs.function_name == case["expect"]
 
 
-def h_correctness_template(case: dict, env: Env) -> None:
+def check_correctness_template(case: dict, env: Env) -> None:
     outage(env.mp)  # deterministic: the template tier answers
     res = submit(case["input"], graph=memory_graph())
     assert res.values.get("code"), res.values.get("report")
@@ -325,50 +325,50 @@ def h_correctness_template(case: dict, env: Env) -> None:
     assert ref.exit_code == 0, ref.stdout
 
 
-def h_llm_routing(case: dict, env: Env) -> None:
+def check_llm_routing(case: dict, env: Env) -> None:
     env.mp.setattr("codeforge.agents.router.resilient_invoke", cassette_invoke(env.record))
-    assert RouterAgent()({"raw_request_masked": case["input"]})["route"].kind == case["expect"]
+    assert RouterAgent()({"request_masked": case["input"]})["route"].kind == case["expect"]
 
 
-def h_llm_requirements(case: dict, env: Env) -> None:
+def check_llm_requirements(case: dict, env: Env) -> None:
     env.mp.setattr("codeforge.agents.requirements.resilient_invoke", cassette_invoke(env.record))
-    reqs = RequirementsAgent()({"raw_request_masked": case["input"]})["requirements"]
+    reqs = RequirementsAgent()({"request_masked": case["input"]})["requirements"]
     assert case["expect"] in reqs.function_name.lower() and reqs.edge_cases
 
 
-def h_llm_correctness(case: dict, env: Env) -> None:
+def check_llm_correctness(case: dict, env: Env) -> None:
     patch_llm(env.mp, cassette_invoke(env.record))
     res = submit(case["input"], graph=memory_graph())
     assert res.values.get("code"), res.values.get("report")
     assert _run_reference(res.values["code"], case["expect"]).exit_code == 0
 
 
-HANDLERS: dict[str, Any] = {
-    "identity_spoof": h_identity_spoof, "identity_spoof_graph": h_identity_spoof_graph,
-    "cross_user_read": h_cross_user_read,
-    "pii_secret": h_pii, "pii_email": h_pii, "pii_card": h_pii, "pii_aadhaar": h_pii, "pii_phone": h_pii,
-    "pii_negative": h_pii_negative,
-    "policy_deny": h_policy("deny"), "policy_approval": h_policy("needs_approval"), "policy_allow": h_policy("allow"),
-    "timeout": h_timeout, "idempotency": h_idempotency, "concurrent_idempotent": h_concurrent_idempotent,
-    "report_honesty": h_report_honesty, "approval_pause": h_approval_pause,
-    "student_cannot_resume": h_student_cannot_resume, "instructor_resume": h_instructor_resume,
-    "approval_expiry": h_approval_expiry, "quota_enforced": h_quota,
-    "escalation": h_escalation, "escalation_negative": h_escalation_negative,
-    "escalation_positive": h_escalation_positive,
-    "outage_template": h_outage_template, "outage_unknown": h_outage_unknown,
-    "refused_never_executes": h_refused_never_executes, "degraded_no_auto_approve": h_degraded_no_auto_approve,
-    "checkpoint_no_pii": h_checkpoint_no_pii, "invalid_tests_never_run": h_invalid_tests_never_run,
-    "student_c_graph": h_student_c_graph, "repeated_denial": h_repeated_denial,
-    "redteam_corpus": h_redteam_corpus,
-    "cache_lookalike": h_cache_lookalike, "cache_lookalike_store": h_cache_lookalike_store,
-    "routing_fallback": h_routing_fallback, "requirements_fallback": h_requirements_fallback,
-    "correctness_template": h_correctness_template,
-    "llm_routing": h_llm_routing, "llm_requirements": h_llm_requirements, "llm_correctness": h_llm_correctness,
+CHECKS: dict[str, Any] = {
+    "identity_spoof": check_identity_spoof, "identity_spoof_graph": check_identity_spoof_graph,
+    "cross_user_read": check_cross_user_read,
+    "pii_secret": check_pii, "pii_email": check_pii, "pii_card": check_pii, "pii_aadhaar": check_pii, "pii_phone": check_pii,
+    "pii_negative": check_pii_negative,
+    "policy_deny": check_policy("deny"), "policy_approval": check_policy("needs_approval"), "policy_allow": check_policy("allow"),
+    "timeout": check_timeout, "idempotency": check_idempotency, "concurrent_idempotent": check_concurrent_idempotent,
+    "report_honesty": check_report_honesty, "approval_pause": check_approval_pause,
+    "student_cannot_resume": check_student_cannot_resume, "instructor_resume": check_instructor_resume,
+    "approval_expiry": check_approval_expiry, "quota_enforced": check_quota,
+    "escalation": check_escalation, "escalation_negative": check_escalation_negative,
+    "escalation_positive": check_escalation_positive,
+    "outage_template": check_outage_template, "outage_unknown": check_outage_unknown,
+    "refused_never_executes": check_refused_never_executes, "degraded_no_auto_approve": check_degraded_no_auto_approve,
+    "checkpoint_no_pii": check_checkpoint_no_pii, "invalid_tests_never_run": check_invalid_tests_never_run,
+    "student_c_graph": check_student_c_graph, "repeated_denial": check_repeated_denial,
+    "redteam_corpus": check_redteam_corpus,
+    "cache_lookalike": check_cache_lookalike, "cache_lookalike_store": check_cache_lookalike_store,
+    "routing_fallback": check_routing_fallback, "requirements_fallback": check_requirements_fallback,
+    "correctness_template": check_correctness_template,
+    "llm_routing": check_llm_routing, "llm_requirements": check_llm_requirements, "llm_correctness": check_llm_correctness,
 }
 
 
 def test_every_case_kind_has_a_handler():
-    missing = {c["kind"] for c in CASES} - set(HANDLERS)
+    missing = {c["kind"] for c in CASES} - set(CHECKS)
     assert not missing, f"golden cases with no handler (would pass vacuously): {missing}"
 
 
@@ -383,7 +383,7 @@ def test_golden_set_shape():
 def test_golden_case(case: dict, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, as_profile: Any, request: Any) -> None:
     env = Env(monkeypatch, tmp_path, as_profile, request.config.getoption("--record"))
     try:
-        HANDLERS[case["kind"]](case, env)
+        CHECKS[case["kind"]](case, env)
         _RESULTS[case["id"]] = "passed"
     except pytest.skip.Exception:
         _RESULTS[case["id"]] = "skipped"

@@ -107,7 +107,7 @@ def _invoke_once(agent: str, tier: str, label: str, messages: Any, schema: type[
             "tags": [agent, label],
             "metadata": {
                 "agent": agent,
-                "served_tier": label,
+                "served_by": label,
                 "attempt": attempt,
                 "breaker_state": get_breaker(label).state,
                 "request_id": current_request_id.get(),

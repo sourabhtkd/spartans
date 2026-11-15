@@ -71,7 +71,7 @@ class HandoffTicket(BaseModel):
 class CodeForgeState(TypedDict, total=False):
     thread_id: str
     identity: Identity
-    raw_request_masked: str
+    request_masked: str
     history: list[dict[str, Any]]
     route: RouteDecision
     requirements: Requirements
@@ -82,7 +82,7 @@ class CodeForgeState(TypedDict, total=False):
     run_result: RunResult | None
     idempotency_key: str | None
     attempts: int
-    served_tier: str
+    served_by: str
     cache_hit: bool
     ticket: HandoffTicket | None
     report: str
@@ -97,7 +97,7 @@ class CodeForgeState(TypedDict, total=False):
 _TIER_RANK = {"cache": 0, "primary": 1, "fallback": 2, "template": 3, "refused": 4}
 
 
-def merge_tier(previous: str | None, new: str) -> str:
+def worst_tier(previous: str | None, new: str) -> str:
     """Keep the most-degraded tier seen in a run so the report never understates degradation."""
     if not previous:
         return new

@@ -13,7 +13,7 @@ def determine_status_message(state: CodeForgeState) -> str:
     """Computes honest status message in pure Python from real execution exit codes.
     Never lets LLM claim tests passed when exit_code != 0.
     """
-    if state.get("served_tier") == "refused":
+    if state.get("served_by") == "refused":
         return "❌ CodeForge cannot generate code right now. Handoff ticket created."
 
     ticket = state.get("ticket")
@@ -77,7 +77,7 @@ def render_report(state: CodeForgeState) -> str:
         status_message=status_msg,
         code=state.get("code"),
         tests=state.get("tests"),
-        served_tier=state.get("served_tier", "primary"),
+        served_by=state.get("served_by", "primary"),
         cache_hit=state.get("cache_hit", False),
         is_cached_run=run_result.cached if run_result else False,
         ticket_id=ticket.ticket_id if ticket else None,

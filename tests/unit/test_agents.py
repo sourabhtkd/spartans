@@ -59,14 +59,14 @@ def fake_llm(monkeypatch: pytest.MonkeyPatch) -> FakeLLM:
 
 def test_router_agent(fake_llm: FakeLLM):
     agent = RouterAgent()
-    state: CodeForgeState = {"raw_request_masked": "Write a palindrome function"}
+    state: CodeForgeState = {"request_masked": "Write a palindrome function"}
     result = agent(state)
     assert result["route"].kind == "python_function"
 
 
 def test_requirements_agent(fake_llm: FakeLLM):
     agent = RequirementsAgent()
-    state: CodeForgeState = {"raw_request_masked": "Write a palindrome function"}
+    state: CodeForgeState = {"request_masked": "Write a palindrome function"}
     result = agent(state)
     assert result["requirements"].function_name == "is_palindrome"
 
@@ -74,7 +74,7 @@ def test_requirements_agent(fake_llm: FakeLLM):
 def test_codegen_agent_initial_and_repair(fake_llm: FakeLLM):
     agent = CodeGenAgent()
     state: CodeForgeState = {
-        "raw_request_masked": "Write a palindrome function",
+        "request_masked": "Write a palindrome function",
         "requirements": Requirements(function_name="is_palindrome"),
         "attempts": 0,
     }
