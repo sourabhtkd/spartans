@@ -17,6 +17,7 @@ from codeforge.observability import get_logger, score_trace
 from codeforge.pipeline import build_graph
 from codeforge.pipeline.tracing import step_listener
 from codeforge.privacy.pii import mask_text
+from codeforge.report import is_refused
 from codeforge.store.conversations import ConversationStore
 from codeforge.store.db import Approval, Feedback, Message, Metric, Ticket, init_db
 from codeforge.store.runs import RunStore
@@ -38,6 +39,8 @@ def _reply_from(result: SubmitResult) -> tuple[str, str, str, str]:
             f"Please switch to the **Reviewer Queue** page as an instructor to Approve or Reject this run."
         )
         return msg, code, tests, "paused"
+    if is_refused(values):
+        code = tests = ""  # refused code is never shown or replayed as chat history
     return values.get("report", "No report generated."), code, tests, "done"
 
 
@@ -136,11 +139,12 @@ def refresh_turn(thread_id: str) -> str:
     if "human_approval" in tuple(snap.next):
         return "paused"
     values = snap.values
+    refused = is_refused(values)  # a rejected/denied run must not reveal its code
     ConversationStore().update_assistant_message(
         thread_id,
         content=values.get("report", "No report generated."),
-        code=values.get("code", ""),
-        tests=values.get("tests", ""),
+        code="" if refused else values.get("code", ""),
+        tests="" if refused else values.get("tests", ""),
         status="done",
         served_by=str(values.get("served_by", "")),
     )
@@ -209,8 +213,6 @@ def review_decision(thread_id: str, action: str, comment: str) -> str:
 
 
 def tickets_table() -> list[list[str]]:
-    if current_identity().role != "instructor":
-        raise PermissionError("Only instructors may view tickets.")
     sf = init_db()
     with sf() as session:
         tickets = session.query(Ticket).order_by(Ticket.created_at.desc()).all()
@@ -259,3 +261,18 @@ def set_chaos_rate(rate: float) -> str:
     os.environ["CHAOS_FAILURE_RATE"] = str(rate)
     clear_settings_cache()
     return f"Chaos failure rate set to {rate:.0%}."
+
+
+def identity_badge() -> str:
+    ident = current_identity()
+    return f"**Active Identity**: `[{ident.user_id}]` | **Role**: `{ident.role}`"
+
+
+def switch_profile(profile_name: str) -> tuple[str, bool]:
+    """Demo-only profile switch (identity still comes from config profiles, never from text).
+
+    Returns (identity badge text, whether to show the reviewer tab).
+    """
+    os.environ["CODEFORGE_PROFILE"] = profile_name
+    clear_settings_cache()
+    return identity_badge(), current_identity().role == "instructor"

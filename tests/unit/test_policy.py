@@ -64,3 +64,10 @@ def test_syntax_error_denied():
     decision = evaluate_code_policy(code)
     assert decision.verdict == "deny"
     assert any("Unparseable" in r for r in decision.reasons)
+
+
+def test_future_import_allowed_but_private_modules_denied():
+    from codeforge.policy.code_policy import evaluate_code_policy
+
+    assert evaluate_code_policy("from __future__ import annotations\nx = 1").verdict == "allow"
+    assert evaluate_code_policy("import _socket").verdict == "deny"

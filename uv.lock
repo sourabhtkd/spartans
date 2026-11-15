@@ -354,6 +354,7 @@ name = "codeforge"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "indic-pii" },
     { name = "jinja2" },
     { name = "langchain-core" },
     { name = "langchain-groq" },
@@ -386,6 +387,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "indic-pii", specifier = ">=0.1.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "langchain-core", specifier = ">=1.8.0" },
     { name = "langchain-groq", specifier = ">=1.1.3" },
@@ -716,6 +718,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f5/08/8eea9d4b8302028f3abb2c0813953f7aec26d33b7a8960ed760e65ff29fa/idna-3.20.tar.gz", hash = "sha256:a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44", size = 216463, upload-time = "2026-09-17T14:11:04.752Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl", hash = "sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c", size = 69583, upload-time = "2026-09-17T14:11:03.168Z" },
+]
+
+[[package]]
+name = "indic-pii"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "regex" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/34/bf/7ff0543bcf9e50619e788592147336a05644da24830637a714e73306dc6b/indic_pii-0.1.1.tar.gz", hash = "sha256:c5ecfef9f776a5ce0c08634f8e7fe97767fe856fe68a0e753ca5285d437ee23b", size = 16145, upload-time = "2026-04-07T10:38:25.257Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/36/e2399d8c9904ab5adcbb3165c16d22c73f276023fe80ebc45a4825834290/indic_pii-0.1.1-py3-none-any.whl", hash = "sha256:1f36677c18a55c30e7f8801098b60a4e438fe5ad9fc0e4ca5f2f265d101fe60a", size = 11711, upload-time = "2026-04-07T10:38:23.587Z" },
 ]
 
 [[package]]

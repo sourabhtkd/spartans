@@ -40,10 +40,25 @@ def test_mask_aadhaar():
     formatted = f"{valid_aadhaar[:4]} {valid_aadhaar[4:8]} {valid_aadhaar[8:]}"
     assert mask_text(f"Aadhaar is {formatted}") == "Aadhaar is [AADHAAR]"
 
-    # 12-digit number failing Verhoeff
+    # 12-digit number failing Verhoeff is still masked (typos / test data must not leak)
     invalid_aadhaar = "23456789012" + str((check + 1) % 10)
     assert not is_verhoeff_valid(invalid_aadhaar)
-    assert mask_text(f"id {invalid_aadhaar}") == f"id {invalid_aadhaar}"
+    assert mask_text(f"id {invalid_aadhaar}") == "id [AADHAAR]"
+    assert mask_text("aadhaar 2345-6789-0123") == "aadhaar [AADHAAR]"
+    assert mask_text(f"id{valid_aadhaar}") == "id[AADHAAR]"  # glued to text
+
+
+def test_mask_indian_ids():
+    assert mask_text("PAN ABCDE1234F ok") == "PAN [PAN] ok"
+    assert mask_text("ifsc HDFC0001234") == "ifsc [IFSC]"
+    assert mask_text("pay rahul@upi now") == "pay [UPI] now"
+    assert mask_text("acct no 123456789012 here") == "acct no [BANK_ACCOUNT] here"
+    assert mask_text("mail a.b@example.com") == "mail [EMAIL]"
+
+
+def test_indian_id_negatives():
+    for s in ["sum a list of 1234567890 numbers", "def f(): return x1234567", "ABCDE12345"]:
+        assert mask_text(s) == s
 
 
 def test_mask_phone():
@@ -73,3 +88,10 @@ def test_mask_obj_nested():
     assert masked["nested"][0]["secret"] == "[SECRET]"
     assert masked["nested"][1] == "[PHONE]"
     assert masked["user"] == "Alice"
+
+
+def test_aadhaar_masked_with_irregular_grouping():
+    from codeforge.privacy.pii import mask_text
+
+    assert mask_text("validate my adhar card 23456 7890 123") == "validate my adhar card [AADHAAR]"
+    assert mask_text("x = 12345") == "x = 12345"

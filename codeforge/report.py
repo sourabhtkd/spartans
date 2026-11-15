@@ -2,16 +2,18 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from codeforge.config import current_identity, get_settings
+from codeforge.config import get_settings
 from codeforge.state import CodeForgeState
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 _ENV = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)), autoescape=False)
 
 
-def _can_view_ticket_details(state: CodeForgeState) -> bool:
-    identity = state.get("identity") or current_identity()
-    return identity.role == "instructor"
+def is_refused(state: CodeForgeState) -> bool:
+    """True when the policy denied the code or a reviewer rejected it: such code is never shown."""
+    policy = state.get("policy")
+    approval = state.get("approval")
+    return bool((policy and policy.verdict == "deny") or (approval and not approval.approved))
 
 
 def determine_status_message(state: CodeForgeState) -> str:
@@ -23,8 +25,6 @@ def determine_status_message(state: CodeForgeState) -> str:
 
     ticket = state.get("ticket")
     if ticket and not state.get("code") and ticket.reason.startswith("User requested human"):
-        if not _can_view_ticket_details(state):
-            return "🙋 Your request was escalated to a human. Nothing was executed."
         return (
             f"🙋 Your request was escalated to a human (ticket {ticket.ticket_id}, "
             f"{ticket.priority}, SLA {ticket.sla_hours}h). Nothing was executed."
@@ -70,7 +70,9 @@ def render_report(state: CodeForgeState) -> str:
     template = _ENV.get_template("report.md.j2")
     status_msg = determine_status_message(state)
     run_result = state.get("run_result")
-    ticket = state.get("ticket") if _can_view_ticket_details(state) else None
+    ticket = state.get("ticket")
+
+    denied = is_refused(state)  # never show code the policy or a reviewer refused
 
     notes: list[str] = []
     for ev in state.get("events", []):
@@ -82,8 +84,8 @@ def render_report(state: CodeForgeState) -> str:
     return template.render(
         reviewer_notes=notes,
         status_message=status_msg,
-        code=state.get("code"),
-        tests=state.get("tests"),
+        code=None if denied else state.get("code"),
+        tests=None if denied else state.get("tests"),
         served_by=state.get("served_by", "primary"),
         cache_hit=state.get("cache_hit", False),
         is_cached_run=run_result.cached if run_result else False,

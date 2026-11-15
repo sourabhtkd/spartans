@@ -92,3 +92,18 @@ def test_paused_turn_is_stored_as_paused_and_refresh_picks_up_outcome(monkeypatc
     turn = handlers.chat_turn(None, "read a file")
     assert turn.status == "paused" and "Reviewer Approval" in turn.reply
     assert handlers.load_messages(turn.conversation_id)[-1].status == "paused"
+
+
+def test_reply_hides_code_when_policy_denied():
+    from types import SimpleNamespace
+
+    from codeforge.state import PolicyDecision
+
+    values = {
+        "code": "import os\n",
+        "tests": "def test_x(): pass\n",
+        "policy": PolicyDecision(verdict="deny", reasons=["Denied import 'os'"]),
+        "report": "❌ Refused by policy: Denied import 'os'. Nothing was executed.",
+    }
+    reply, code, tests, status = handlers._reply_from(SimpleNamespace(values=values, pending_approval=False))
+    assert "Refused by policy" in reply and code == "" and tests == "" and status == "done"

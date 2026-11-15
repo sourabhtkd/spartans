@@ -1,4 +1,4 @@
-"""Streamlit entrypoint: navigation follows the server-selected role."""
+"""Streamlit entrypoint: top navigation bar with profile switcher; logic lives in handlers.py."""
 import streamlit as st
 
 st.set_page_config(page_title="CodeForge — Multi-Agent NL to Code", page_icon="🔨", layout="wide")
@@ -14,10 +14,9 @@ def build_pages() -> list[st.Page]:
         st.Page(my_runs.render, title="My Runs", icon="📜", url_path="runs"),
     ]
     if current_identity().role == "instructor":
-        pages.extend([
-            st.Page(reviewer.render, title="Reviewer Queue", icon="🛡️", url_path="review"),
-            st.Page(tickets.render, title="Tickets", icon="🎫", url_path="tickets"),
-        ])
+        pages.append(st.Page(reviewer.render, title="Reviewer Queue", icon="🛡️", url_path="review"))
+    if current_identity().role != "student":
+        pages.append(st.Page(tickets.render, title="Tickets", icon="🎫", url_path="tickets"))
     pages.append(st.Page(ops.render, title="Ops", icon="⚙️", url_path="ops"))
     return pages
 

@@ -8,63 +8,133 @@ CodeForge is a production-grade multi-agent platform that translates natural lan
 
 ## Architecture Flowchart
 
+### End-to-end request flow
+
+Every entry point (CLI, Streamlit chat) calls `entrypoint.submit()`, which **masks PII before anything touches the graph or its checkpointer**. The LangGraph pipeline (`codeforge/pipeline/`) then runs 15 nodes. Solid edges are unconditional; labelled edges are pure-Python routing functions in [`routing.py`](codeforge/pipeline/routing.py), never an LLM decision.
+
 ```mermaid
----
-config:
-  flowchart:
-    curve: linear
----
-graph TD;
-	__start__([<p>__start__</p>]):::first
-	ingress_guard(ingress_guard)
-	cache_lookup(cache_lookup)
-	router(router)
-	requirements(requirements)
-	codegen(codegen)
-	testgen(testgen)
-	test_validator(test_validator)
-	policy_gate(policy_gate)
-	refuse(refuse)
-	human_approval(human_approval)
-	sandbox_run(sandbox_run)
-	evaluator(evaluator)
-	cache_store(cache_store)
-	escalate_check(escalate_check)
-	report(report)
-	__end__([<p>__end__</p>]):::last
-	__start__ --> ingress_guard;
-	cache_lookup -.-> router;
-	cache_lookup -.-> test_validator;
-	cache_store --> escalate_check;
-	codegen -.-> escalate_check;
-	codegen -.-> policy_gate;
-	codegen -.-> testgen;
-	escalate_check --> report;
-	evaluator --> cache_store;
-	human_approval -.-> escalate_check;
-	human_approval -.-> sandbox_run;
-	ingress_guard -.-> cache_lookup;
-	ingress_guard -.-> report;
-	policy_gate -.-> human_approval;
-	policy_gate -.-> refuse;
-	policy_gate -.-> sandbox_run;
-	refuse --> escalate_check;
-	requirements --> codegen;
-	router -.-> report;
-	router -.-> requirements;
-	sandbox_run -.-> cache_store;
-	sandbox_run -.-> codegen;
-	sandbox_run -.-> escalate_check;
-	sandbox_run -.-> evaluator;
-	test_validator -.-> escalate_check;
-	test_validator -.-> policy_gate;
-	test_validator -.-> testgen;
-	testgen -.-> escalate_check;
-	testgen -.-> test_validator;
-	report --> __end__;
-	classDef default fill:#f2f0ff,line-height:1.2
-	classDef first fill-opacity:0
-	classDef last fill:#bfb6fc
+flowchart TD
+    USER(["User request<br/>CLI / Streamlit chat"]) --> SUBMIT["entrypoint.submit()<br/>mask PII, bind thread + trace ids"]
+    SUBMIT --> INGRESS
+
+    subgraph GATE1["1 · Admission"]
+        INGRESS["ingress_guard<br/>mask again, identity from config,<br/>quota check, escalation keywords"]
+        CACHE{"cache_lookup<br/>guarded semantic cache"}
+    end
+
+    subgraph GEN["2 · Understand and generate (LLM agents)"]
+        ROUTER{"router<br/>python / sql / other"}
+        REQ["requirements<br/>structured spec"]
+        CODEGEN["codegen<br/>solution, or repair when tests fail"]
+        TESTGEN["testgen<br/>pytest tests"]
+        VALID{"test_validator<br/>AST-checks tests"}
+    end
+
+    subgraph SAFE["3 · Deterministic safety (no LLM)"]
+        POLICY{"policy_gate<br/>pure AST policy"}
+        APPROVAL{{"human_approval<br/>interrupt, instructor resumes"}}
+        REFUSE["refuse<br/>fail closed"]
+    end
+
+    subgraph EXEC["4 · Verify"]
+        SANDBOX{"sandbox_run<br/>pytest in locked-down subprocess,<br/>idempotent claim"}
+        EVAL["evaluator<br/>advisory review only"]
+        STORE["cache_store<br/>remember passing solution"]
+    end
+
+    ESC["escalate_check<br/>open P1/P2/P3 ticket if needed"]
+    REPORT["report<br/>Jinja2 template from exit codes"]
+    DONE(["Reply + solution/tests<br/>run saved to RunStore"])
+
+    INGRESS -->|"quota exceeded or P1 human request"| REPORT
+    INGRESS -->|"ok"| CACHE
+    CACHE -->|"miss"| ROUTER
+    CACHE -->|"hit: still fully gated"| VALID
+    ROUTER -->|"python_function"| REQ
+    ROUTER -->|"sql / other: not supported"| REPORT
+    REQ --> CODEGEN
+    CODEGEN -->|"first pass"| TESTGEN
+    CODEGEN -->|"repair: tests frozen"| POLICY
+    CODEGEN -->|"empty code or refused"| ESC
+    TESTGEN -->|"tests produced"| VALID
+    TESTGEN -->|"no tests"| ESC
+    VALID -->|"valid"| POLICY
+    VALID -->|"invalid, regen budget left"| TESTGEN
+    VALID -->|"invalid, budget spent"| ESC
+    POLICY -->|"allow"| SANDBOX
+    POLICY -->|"needs_approval"| APPROVAL
+    POLICY -->|"deny or no decision"| REFUSE
+    APPROVAL -->|"approved"| SANDBOX
+    APPROVAL -->|"rejected or expired"| ESC
+    REFUSE --> ESC
+    SANDBOX -->|"pass, fresh model output"| EVAL
+    SANDBOX -->|"pass, cache/template"| STORE
+    SANDBOX -->|"fail, repairs left (max 2)"| CODEGEN
+    SANDBOX -->|"fail, repairs exhausted"| ESC
+    EVAL --> STORE
+    STORE --> ESC
+    ESC --> REPORT
+    REPORT --> DONE
+
+    classDef llm fill:#e8f0ff,stroke:#4a6fd8;
+    classDef safe fill:#fff1e0,stroke:#d9822b;
+    classDef term fill:#e6f6ec,stroke:#2f9e5b;
+    class ROUTER,REQ,CODEGEN,TESTGEN,EVAL llm;
+    class POLICY,APPROVAL,REFUSE,SANDBOX,VALID safe;
+    class USER,DONE term;
+```
+
+**Legend**: blue = LLM-backed agents (all calls go through the resilient `llm.py` path) · orange = deterministic Python gates · green = entry/exit.
+
+### Node reference
+
+| # | Node | Kind | What it does | Next |
+| :-- | :--- | :--- | :--- | :--- |
+| 1 | `ingress_guard` | Python | Re-masks PII, reads identity from config (never from input), enforces per-user quota, compacts long chat history, opens a ticket on an explicit "talk to a human" request | `cache_lookup`, or `report` on quota exceeded / P1 handoff |
+| 2 | `cache_lookup` | Python | Guarded semantic cache lookup (role- and context-aware; follow-up turns bypass it) | `router` on miss, `test_validator` on hit |
+| 3 | `router` | LLM (keyword fallback) | Classifies `python_function` / `sql` / `other` | `requirements`, else `report` |
+| 4 | `requirements` | LLM | Turns the request into a structured spec (function name, signature, edge cases) | `codegen` |
+| 5 | `codegen` | LLM (template fallback) | Writes the solution; on repair it receives the previous code and failing test | `testgen`, `policy_gate` (repair), or `escalate_check` |
+| 6 | `testgen` | LLM | Writes pytest tests | `test_validator` |
+| 7 | `test_validator` | Python (AST) | Needs valid syntax, imports the target, a `test_*` function and enough asserts | `policy_gate`; regenerates tests up to the budget |
+| 8 | `policy_gate` | Python (AST) | `evaluate_code_policy(code + tests)` → `allow` / `needs_approval` / `deny` | `sandbox_run`, `human_approval`, `refuse` |
+| 9 | `human_approval` | Python (interrupt) | Pauses the graph; a *different*, server-identified instructor approves or rejects; stale requests expire | `sandbox_run` or `escalate_check` |
+| 10 | `refuse` | Python | Records denial reasons; a missing policy decision is treated as deny | `escalate_check` |
+| 11 | `sandbox_run` | Python | Idempotent claim, then `pytest` in a tempdir subprocess (rlimits, scrubbed env, network blocked) | `evaluator`, `cache_store`, `codegen` (repair) or `escalate_check` |
+| 12 | `evaluator` | LLM | Advisory critique of a passing solution; never changes pass/fail | `cache_store` |
+| 13 | `cache_store` | Python | Stores a passing, context-free solution in the semantic cache | `escalate_check` |
+| 14 | `escalate_check` | Python | Opens a P1/P2/P3 ticket for outage-refusals, repeated policy denials or failed repairs | `report` |
+| 15 | `report` | Python (Jinja2) | Renders the final answer from raw state; "✅ Tests passed" only if the sandbox exit code is `0` | END |
+
+### Key loops and guarantees
+
+- **Repair loop** (`sandbox_run → codegen → policy_gate → sandbox_run`): at most `MAX_REPAIR_ATTEMPTS = 2` regenerations. Tests are **frozen** (`tests_frozen`) so a repair cannot pass by weakening them, and the new code skips `testgen` but is **re-checked by the policy gate**.
+- **Test regeneration loop** (`test_validator → testgen`): invalid generated tests are regenerated up to `MAX_TEST_REGENERATIONS = 2`, then escalated. Invalid tests never run.
+- **Cache hits are not trusted**: a hit jumps to `test_validator` and still passes the policy gate and sandbox; it just skips the LLM agents and the evaluator.
+- **Human-in-the-loop**: `needs_approval` calls LangGraph `interrupt()`; state is checkpointed in SQLite, and `resume_approval()` continues the same thread once an instructor decides (or fails closed on expiry).
+- **Degradation ladder** (inside every LLM agent): primary model → fallback model → offline template → honest refusal + ticket. Chaos injection, retries with full jitter and per-tier circuit breakers all sit in `llm.resilient_invoke`.
+- **Every path ends in `escalate_check → report`** (except the two early exits from `ingress_guard` and `router`, which go straight to `report`), so the user always receives a deterministic, honest answer.
+
+### Cross-cutting layers
+
+```mermaid
+flowchart LR
+    subgraph UI["Interfaces"]
+        CLI["cli.py"]
+        ST["Streamlit ui/<br/>Chat · My Runs · Reviewer · Tickets · Ops"]
+    end
+    CLI --> SUB["entrypoint.submit()"]
+    ST --> SUB
+    SUB --> PIPE["pipeline/ (LangGraph, SqliteSaver checkpoints)"]
+    PIPE --> AG["agents/ → llm.resilient_invoke<br/>chaos → breaker → retry → fallback → template"]
+    PIPE --> POL["policy/ + sandbox/"]
+    PIPE --> HITL["hitl/ approvals + tickets"]
+    PIPE --> DB[("store/ SQLite<br/>runs · approvals · tickets · conversations · feedback")]
+    AG --> PROV["Groq / OpenAI-compatible providers"]
+    AG -.-> OBS["Metering · structlog · Langfuse (session per chat, trace per turn)"]
+    PIPE -.-> OBS
+    ST --> HITL
+    ST --> DB
 ```
 
 ---
@@ -101,17 +171,23 @@ graph TD;
 ```text
 codeforge/
 ├── entrypoint.py       # submit(): masks PII BEFORE the graph/checkpointer; the only way user text enters
-├── graph.py            # LangGraph state machine (traced nodes, fail-closed routing)
-├── agents/             # Router, Requirements, CodeGen, TestGen, TestValidator (gates), Evaluator (advisory)
-├── guard/              # PII masking (Luhn cards, Verhoeff Aadhaar, keys, emails, phones)
+├── cli.py              # command-line interface over submit()
+├── state.py            # CodeForgeState (graph state) + Pydantic models (RouteDecision, PolicyDecision, RunResult...)
+├── pipeline/           # builder.py (nodes + EDGES + DECISIONS), routing.py (pure routing fns), nodes.py, tracing.py
+├── agents/             # Router, Requirements, CodeGen, TestGen, TestValidator (gate), Evaluator (advisory), history compaction
+├── prompts/            # system prompts per agent (router.md, codegen.md, ...)
+├── privacy/            # PII masking (Luhn cards, Verhoeff Aadhaar, keys, emails, phones)
 ├── policy/             # evaluate_code_policy(): pure AST function -> allow | needs_approval | deny
 ├── sandbox/            # subprocess + tempdir + rlimits + scrubbed env + network blocked (+ netns / docker)
-├── store/              # SQLAlchemy 2.0 models, identity-scoped RunStore, quotas, atomic idempotency claim
+├── store/              # SQLAlchemy 2.0 models, identity-scoped RunStore, quotas, atomic idempotency claim, conversations
 ├── hitl/               # approval (interrupt/resume, server-side approver, expiry) + handoff tickets
 ├── resilience/         # retry classifier + jitter, circuit breaker, chaos switch, template library
 ├── cost/               # metering callback, guarded semantic cache, history compaction
+├── report.py           # deterministic Jinja2 report renderer (templates/report.md.j2)
 ├── bench/              # chaos + cost benchmarks, simulated provider (clearly labelled)
 ├── llm.py              # the single resilient call path (metering + Langfuse + retries + breaker + fallback)
+├── observability.py    # structlog + Langfuse tracing helpers
+├── runtime.py          # reset_runtime_state() for tests/benchmarks
 ├── ui/                 # web UI: handlers.py (what buttons do), app.py + pages/ (the Streamlit app)
 └── config.py           # identity/role/quotas from config.yaml; never from message text
 evals/
@@ -163,11 +239,9 @@ uv run python -m codeforge.cli "Write a function to check if a string is a palin
 CODEFORGE_PROFILE=instructor uv run python -m codeforge.cli "Write an is_prime checker"
 ```
 
-### Streamlit Web UI
+### Streamlit Web UI (top navigation, 5 pages)
 ```bash
 uv run python -m codeforge.ui
-# Instructor pages:
-CODEFORGE_PROFILE=instructor uv run python -m codeforge.ui
 ```
 Access the application at `http://localhost:8501`:
 - **Chat**: a real conversation. Each chat has its own session id (`conv_xxxxxxxx`), is saved in the DB (tables `conversations` / `messages`) and listed on the left so you can reopen it. Follow-ups ("now add type hints") get the earlier turns as context. Live progress shows each pipeline step; every reply has a solution/tests viewer and 👍/👎 feedback.
@@ -175,7 +249,7 @@ Access the application at `http://localhost:8501`:
 **Observability per conversation.** Every user and assistant message is logged as a structured `chat_message` event (PII-masked, with `conversation_id`). With `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` set, Langfuse shows one **session per conversation** and one **trace per turn** (pipeline nodes and LLM calls nested under it, tagged with the user and role); 👍/👎 is recorded as a `user_feedback` score on the turn's trace.
 - **My Runs**: Role-isolated run history (cross-user access strictly blocked).
 - **Reviewer Queue**: Instructor-only approval dashboard for sensitive operations.
-- **Tickets**: Instructor-only list of sanitized human support escalation tickets.
+- **Tickets**: Sanitized human support escalation tickets.
 - **Ops**: Real-time token cost table, circuit breaker status, chaos toggle.
 
 ---
@@ -241,7 +315,7 @@ computed from the run, never hardcoded.
 ## Known Limitations (honest notes)
 - R3 is partial (explicit-human / repeated-denial / failed-repair escalation with P1 tickets; no sentiment triage). R7 (SQL agent) is not built.
 - On macOS the sandbox cannot apply an address-space rlimit or a network namespace; it still enforces timeout, CPU/file/fd limits, scrubbed env and a Python-level socket block. On Linux `unshare -rn` and `RLIMIT_NPROC` are used when available; `SANDBOX_BACKEND=docker` (see `Dockerfile.sandbox`) gives full isolation.
-- The Streamlit UI uses one server-selected `CODEFORGE_PROFILE` for all sessions. It has no per-user login, so deploy separate trusted instances or add authentication before serving multiple users. The server binds to `127.0.0.1` by default (`CODEFORGE_HOST` to override).
+- The Streamlit profile dropdown is a **demo-only**, process-global identity switch; the server binds to `127.0.0.1` by default (`CODEFORGE_HOST` to override). Do not expose it publicly.
 - Schema is created with `create_all` (no migrations); delete the local sqlite files after model changes.
 
 ---

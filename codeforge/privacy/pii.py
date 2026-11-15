@@ -1,6 +1,11 @@
 import re
 from typing import Any
 
+try:  # optional layer: if the library is missing or broken, the regex layers still mask
+    from indic_pii import PIIDetector as _IndicDetector
+except Exception:  # noqa: BLE001  # pragma: no cover
+    _IndicDetector = None  # type: ignore[assignment,misc]
+
 # Verhoeff algorithm lookup tables
 _VERHOEFF_D = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
@@ -68,10 +73,43 @@ API_KEY_REGEX = re.compile(
 )
 EMAIL_REGEX = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
 CARD_REGEX = re.compile(r"\b(?:\d[ -]?){13,19}\b")
-AADHAAR_REGEX = re.compile(r"\b[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}\b")
+# 12 digits starting 2-9, with spaces/hyphens anywhere (users type "23456 7890 123" as often as
+# "2345 6789 0123"). Masked regardless of checksum: over-masking beats leaking.
+AADHAAR_REGEX = re.compile(r"(?<![\d-])[2-9](?:[ -]?\d){11}(?![ -]?\d)")
 # Phone regex: Indian (+91 9876543210 or 9876543210) and international (+1-555-1234567)
 PHONE_INDIA_REGEX = re.compile(r"(?:\+?91[ -]?)?[6-9]\d{9}\b")
 PHONE_INTL_REGEX = re.compile(r"\+\d{1,3}(?:[ -]?\d){6,14}\b")
+
+
+# indic-pii types we act on -> our tag. Passport / voter-ID / driving-licence / DOB are left out on
+# purpose: their patterns also match ordinary code identifiers (e.g. `x1234567`) in prompts.
+_INDIC_TAGS = {
+    "AADHAAR": "[AADHAAR]",
+    "PAN": "[PAN]",
+    "UPI": "[UPI]",
+    "IFSC": "[IFSC]",
+    "PHONE": "[PHONE]",
+    "BANK_ACCOUNT": "[BANK_ACCOUNT]",
+}
+# validate_aadhaar=False: mask any well-formed 12-digit Aadhaar, even when the checksum fails
+# (typos, test data). Over-masking a number is safer than leaking one.
+_indic = _IndicDetector(use_ner=False, validate_aadhaar=False) if _IndicDetector else None
+
+
+def _indic_layer(text: str) -> str:
+    """Replace spans found by indic-pii with our tags. Never raises: on error the text is unchanged."""
+    if _indic is None:
+        return text
+    try:
+        matches = [m for m in _indic.detect(text) if m.pii_type in _INDIC_TAGS]
+        for m in sorted(matches, key=lambda m: m.start, reverse=True):
+            raw = text[m.start : m.end]  # the phone pattern can swallow a leading space
+            start = m.start + (len(raw) - len(raw.lstrip()))
+            end = m.end - (len(raw) - len(raw.rstrip()))
+            text = text[:start] + _INDIC_TAGS[m.pii_type] + text[end:]
+    except Exception:  # noqa: BLE001, S110  # pragma: no cover - fail open to regex layers
+        pass
+    return text
 
 
 def mask_text(text: str) -> str:
@@ -80,8 +118,9 @@ def mask_text(text: str) -> str:
       1. API keys -> [SECRET]
       2. Email -> [EMAIL]
       3. Card (Luhn check) -> [CARD]
-      4. Aadhaar (Verhoeff check) -> [AADHAAR]
-      5. Phone -> [PHONE]
+      4. indic-pii layer: Aadhaar, PAN, UPI, IFSC, phone, bank account -> [AADHAAR] [PAN] ...
+      5. Aadhaar (any 12-digit grouping) -> [AADHAAR]   (backstop)
+      6. Phone -> [PHONE]                         (backstop)
     """
     if not text:
         return text
@@ -102,17 +141,13 @@ def mask_text(text: str) -> str:
 
     text = CARD_REGEX.sub(card_replacer, text)
 
-    # 4. Aadhaar (validate with Verhoeff)
-    def aadhaar_replacer(match: re.Match[str]) -> str:
-        raw = match.group(0)
-        digits = re.sub(r"\D", "", raw)
-        if len(digits) == 12 and is_verhoeff_valid(digits):
-            return "[AADHAAR]"
-        return raw
+    # 4. indic-pii layer (Aadhaar without checksum, PAN, UPI, IFSC, phone, bank account)
+    text = _indic_layer(text)
 
-    text = AADHAAR_REGEX.sub(aadhaar_replacer, text)
+    # 5. Aadhaar: any 12-digit grouping (checksum not required, matching the indic layer's policy)
+    text = AADHAAR_REGEX.sub("[AADHAAR]", text)
 
-    # 5. Phone
+    # 6. Phone
     # First international with +
     text = PHONE_INTL_REGEX.sub("[PHONE]", text)
     # Then Indian

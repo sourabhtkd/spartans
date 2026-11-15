@@ -67,6 +67,7 @@ ALLOW_IMPORTS = {
     "json",
     "pytest",
     "solution",
+    "__future__",  # compiler directives only (e.g. `annotations`); LLMs emit it habitually
 }
 
 DENY_CALL_NAMES = {
@@ -119,11 +120,13 @@ class _Findings:
 
 def _check_import(findings: _Findings, module: str) -> None:
     root = module.split(".")[0]
+    if root in ALLOW_IMPORTS:
+        return
     if root in DENY_IMPORTS or _is_denied_module(root):
         findings.deny.append(f"Denied import '{module}'")
     elif root in NEEDS_APPROVAL_IMPORTS:
         findings.approval.append(f"Import requires approval: '{module}'")
-    elif root not in ALLOW_IMPORTS:
+    else:
         findings.approval.append(f"Unknown import requires approval: '{module}'")
 
 

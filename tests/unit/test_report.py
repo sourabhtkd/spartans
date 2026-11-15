@@ -1,4 +1,3 @@
-from codeforge.config import Identity
 from codeforge.report import render_report
 from codeforge.state import (
     ApprovalDecision,
@@ -64,7 +63,6 @@ def test_report_includes_metadata_and_ticket():
     )
     res = RunResult(exit_code=0, passed=2, failed=0, cached=True)
     state: CodeForgeState = {
-        "identity": Identity(user_id="u_prof", role="instructor"),
         "run_result": res,
         "served_by": "template",
         "cache_hit": True,
@@ -79,21 +77,27 @@ def test_report_includes_metadata_and_ticket():
     assert "Semantic Cache Hit" in rep
 
 
-def test_student_report_hides_ticket_details():
-    ticket = HandoffTicket(
-        ticket_id="tkt_private",
-        priority="P1",
-        sla_hours=4,
-        request_masked="masked",
-        attempts=0,
-        reason="User requested human assistance",
-    )
+def test_report_hides_code_when_policy_denied():
     state: CodeForgeState = {
-        "identity": Identity(user_id="u_alice", role="student"),
-        "ticket": ticket,
+        "code": "import os\n",
+        "tests": "def test_x(): pass\n",
+        "policy": PolicyDecision(verdict="deny", reasons=["Denied import 'os'"]),
     }
-    rep = render_report(state)
-    assert "escalated to a human" in rep
-    assert "tkt_private" not in rep
-    assert "P1" not in rep
-    assert "User requested human assistance" not in rep
+    report = render_report(state)
+    assert "Refused by policy" in report and "Denied import 'os'" in report
+    assert "Generated Solution" not in report and "Generated Tests" not in report
+    assert "import os" not in report
+
+
+def test_reviewer_rejected_code_is_hidden():
+    from codeforge.report import is_refused, render_report
+    from codeforge.state import ApprovalDecision, PolicyDecision
+
+    state = {
+        "code": "SECRET_CODE = 1",
+        "tests": "def test_x(): pass",
+        "policy": PolicyDecision(verdict="needs_approval", reasons=["network"]),
+        "approval": ApprovalDecision(approved=False, approver_id="i1", comment="no"),
+    }
+    assert is_refused(state)
+    assert "SECRET_CODE" not in render_report(state)

@@ -18,8 +18,9 @@ div[data-testid="stMainBlockContainer"] > div > div[data-testid="stVerticalBlock
   background: {NAVY}; margin: 0 -1.5rem 1.5rem -1.5rem; padding: .55rem 1.5rem;
   align-items: center; border-radius: 0 0 14px 14px; box-shadow: 0 4px 14px rgba(15,42,71,.25);
 }}
-.cf-brand {{ color: #fff; font-weight: 700; font-size: 1.25rem; letter-spacing: .2px; white-space: nowrap; }}
-.cf-brand span {{ color: {TEAL}; }}
+.cf-brand {{ color: #000; background: #fff; padding: .15rem .7rem; border-radius: 8px; display: inline-block;
+  font-weight: 700; font-size: 1.25rem; letter-spacing: .2px; white-space: nowrap; }}
+.cf-brand span {{ color: #004ce5; }}
 
 /* nav links */
 a[data-testid="stPageLink-NavLink"] {{
