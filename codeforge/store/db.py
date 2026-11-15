@@ -3,8 +3,8 @@
 Schema is created with ``create_all`` (no migrations). If you change a table,
 delete the local sqlite file; this is documented in the README.
 """
+import threading
 from datetime import UTC, datetime
-from functools import lru_cache
 from typing import Any
 
 from sqlalchemy import DateTime, Float, Integer, String, Text, create_engine, event
@@ -130,12 +130,20 @@ def _enable_wal(dbapi_conn: Any, _record: Any) -> None:
     cur.close()
 
 
-@lru_cache(maxsize=8)
+_ENGINE_LOCK = threading.Lock()
+_ENGINES: dict[str, Engine] = {}
+
+
 def _file_engine(db_url: str) -> Engine:
-    engine = create_engine(db_url, connect_args={"check_same_thread": False})
-    event.listen(engine, "connect", _enable_wal)
-    Base.metadata.create_all(bind=engine)
-    return engine
+    # Lock: concurrent first calls must not race on create_all.
+    with _ENGINE_LOCK:
+        engine = _ENGINES.get(db_url)
+        if engine is None:
+            engine = create_engine(db_url, connect_args={"check_same_thread": False, "timeout": 10})
+            event.listen(engine, "connect", _enable_wal)
+            Base.metadata.create_all(bind=engine)
+            _ENGINES[db_url] = engine
+        return engine
 
 
 def init_db(db_url: str | None = None) -> "sessionmaker[Any]":

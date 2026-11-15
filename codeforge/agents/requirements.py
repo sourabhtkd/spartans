@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Any
 
-from codeforge.llm import resilient_invoke
-from codeforge.state import CodeForgeState, Requirements
+from codeforge.llm import AllModelsDown, resilient_invoke
+from codeforge.state import CodeForgeState, Requirements, merge_tier
 
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "requirements.md"
 
@@ -19,13 +19,13 @@ class RequirementsAgent:
         ]
         try:
             requirements, tier = resilient_invoke("requirements", messages, Requirements)
-            return {"requirements": requirements, "served_tier": tier}
-        except Exception:  # noqa: BLE001
+            return {"requirements": requirements, "served_tier": merge_tier(state.get("served_tier"), tier)}
+        except AllModelsDown:
             from codeforge.resilience.templates import match_template
 
             tpl = match_template(req_text)
             fn_name = tpl.name if tpl else "solve"
             return {
                 "requirements": Requirements(function_name=fn_name, description=fn_name),
-                "served_tier": "template" if tpl else "refused",
+                "served_tier": merge_tier(state.get("served_tier"), "template" if tpl else "refused"),
             }

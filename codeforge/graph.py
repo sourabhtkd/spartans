@@ -20,7 +20,7 @@ from codeforge.policy.code_policy import evaluate_code_policy
 logger = get_logger("graph")
 from codeforge.report import render_report
 from codeforge.sandbox.runner import run_pytest_sandboxed
-from codeforge.state import CodeForgeState, PolicyDecision
+from codeforge.state import CodeForgeState, PolicyDecision, RunResult
 from codeforge.store.runs import (
     QuotaExceeded,
     RunStore,
@@ -117,44 +117,44 @@ def policy_gate_node(state: CodeForgeState) -> dict[str, Any]:
 
 
 def refuse_node(state: CodeForgeState) -> dict[str, Any]:
+    policy = state.get("policy")
+    if policy is None:
+        # Fail closed: no policy decision means nothing may run.
+        policy = PolicyDecision(
+            verdict="deny", reasons=["No policy decision available (fail closed)"]
+        )
     events = list(state.get("events", []))
-    events.append({
-        "stage": "refuse",
-        "reasons": state.get("policy", PolicyDecision(verdict="deny")).reasons,
-    })
-    return {"events": events}
+    events.append({"stage": "refuse", "reasons": policy.reasons})
+    return {"events": events, "policy": policy}
 
 
 def sandbox_run_node(state: CodeForgeState) -> dict[str, Any]:
-    identity = state.get("identity") or current_identity()
+    identity = current_identity()
     code = state.get("code", "")
     tests = state.get("tests", "")
     idem_key = compute_idempotency_key(identity.user_id, code, tests)
+    timeout_s = get_settings().sandbox.get("timeout_s", 10)
 
     store = RunStore(identity_provider=lambda: identity)
     cached_result = store.get_by_idem_key(idem_key)
     if cached_result:
-        return {
-            "run_result": cached_result,
-            "idempotency_key": idem_key,
-        }
+        return {"run_result": cached_result, "idempotency_key": idem_key}
 
-    timeout_s = get_settings().sandbox.get("timeout_s", 10)
+    thread_id = state.get("thread_id", "run")
+    run_id = f"{thread_id}_{idem_key[:8]}"
+    if not store.claim(run_id, idem_key, state.get("raw_request_masked", ""), code, tests):
+        # Another worker owns this exact run: wait for its result, never execute twice.
+        waited = store.wait_for_result(idem_key, max_wait_s=timeout_s + 5)
+        if waited is None:
+            waited = RunResult(
+                exit_code=None,
+                stdout="An identical run is still in progress; please retry shortly.",
+            )
+        return {"run_result": waited, "idempotency_key": idem_key}
+
     result = run_pytest_sandboxed(code, tests, timeout_s=timeout_s)
-
-    thread_id = state.get("thread_id", f"run_{idem_key[:12]}")
-    store.save_run(
-        run_id=thread_id,
-        idem_key=idem_key,
-        request_masked=state.get("raw_request_masked", ""),
-        code=code,
-        tests=tests,
-        result=result,
-    )
-    return {
-        "run_result": result,
-        "idempotency_key": idem_key,
-    }
+    store.complete(idem_key, result)
+    return {"run_result": result, "idempotency_key": idem_key}
 
 
 def cache_store_node(state: CodeForgeState) -> dict[str, Any]:
@@ -178,6 +178,15 @@ def cache_store_node(state: CodeForgeState) -> dict[str, Any]:
 def escalate_check_node(state: CodeForgeState) -> dict[str, Any]:
     if state.get("ticket"):
         return {}
+
+    if state.get("served_tier") == "refused":
+        ticket = create_ticket(
+            state, priority="P2", reason="CodeForge cannot generate code right now (model outage, no template)"
+        )
+        return {"ticket": ticket}
+    if state.get("escalate_reason"):
+        ticket = create_ticket(state, priority="P2", reason=state["escalate_reason"])
+        return {"ticket": ticket}
 
     req_text = state.get("raw_request_masked", "")
     policy = state.get("policy")
@@ -210,10 +219,37 @@ def route_after_ingress(state: CodeForgeState) -> Literal["report", "cache_looku
     return "cache_lookup"
 
 
-def route_after_cache(state: CodeForgeState) -> Literal["policy_gate", "router"]:
+def route_after_cache(state: CodeForgeState) -> Literal["test_validator", "router"]:
+    # Cache hits still pass the test validator, policy gate and sandbox.
     if state.get("cache_hit"):
-        return "policy_gate"
+        return "test_validator"
     return "router"
+
+
+def route_after_codegen(
+    state: CodeForgeState,
+) -> Literal["testgen", "policy_gate", "escalate_check"]:
+    if not state.get("code", "").strip() or state.get("served_tier") == "refused":
+        return "escalate_check"  # nothing to run: never sandbox empty code
+    if state.get("tests_frozen"):
+        return "policy_gate"  # repair loop: tests are frozen, only code changes
+    return "testgen"
+
+
+def route_after_testgen(state: CodeForgeState) -> Literal["test_validator", "escalate_check"]:
+    if not state.get("tests", "").strip():
+        return "escalate_check"
+    return "test_validator"
+
+
+def route_after_validator(
+    state: CodeForgeState,
+) -> Literal["policy_gate", "testgen", "escalate_check"]:
+    if state.get("tests_valid", True):
+        return "policy_gate"
+    if state.get("test_regen_count", 0) < 2:
+        return "testgen"  # regenerate invalid tests once
+    return "escalate_check"
 
 
 def route_after_router(state: CodeForgeState) -> Literal["requirements", "report"]:
@@ -227,8 +263,8 @@ def route_after_policy(
     state: CodeForgeState,
 ) -> Literal["refuse", "human_approval", "sandbox_run"]:
     policy = state.get("policy")
-    if not policy:
-        return "sandbox_run"
+    if policy is None:
+        return "refuse"  # fail closed
     if policy.verdict == "deny":
         return "refuse"
     if policy.verdict == "needs_approval":
@@ -298,9 +334,9 @@ def build_graph(checkpointer: Any | None = None) -> Any:
     graph.add_conditional_edges("cache_lookup", route_after_cache)
     graph.add_conditional_edges("router", route_after_router)
     graph.add_edge("requirements", "codegen")
-    graph.add_edge("codegen", "testgen")
-    graph.add_edge("testgen", "test_validator")
-    graph.add_edge("test_validator", "policy_gate")
+    graph.add_conditional_edges("codegen", route_after_codegen)
+    graph.add_conditional_edges("testgen", route_after_testgen)
+    graph.add_conditional_edges("test_validator", route_after_validator)
     graph.add_conditional_edges("policy_gate", route_after_policy)
     graph.add_edge("refuse", "escalate_check")
     graph.add_conditional_edges("human_approval", route_after_approval)

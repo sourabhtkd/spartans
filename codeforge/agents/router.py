@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Any, Literal
 
-from codeforge.llm import resilient_invoke
-from codeforge.state import CodeForgeState, RouteDecision
+from codeforge.llm import AllModelsDown, resilient_invoke
+from codeforge.state import CodeForgeState, RouteDecision, merge_tier
 
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "router.md"
 
@@ -19,8 +19,8 @@ class RouterAgent:
         ]
         try:
             decision, tier = resilient_invoke("router", messages, RouteDecision)
-            return {"route": decision, "served_tier": tier}
-        except Exception:  # noqa: BLE001 - fallback to keyword router on model outage
+            return {"route": decision, "served_tier": merge_tier(state.get("served_tier"), tier)}
+        except AllModelsDown:  # fallback to keyword router on model outage
             # Plain Python keyword routing during outages
             lowered = req_text.lower()
             kind: Literal["python_function", "sql", "other"]
@@ -33,4 +33,4 @@ class RouterAgent:
             default_route = RouteDecision(
                 kind=kind, language="python" if kind == "python_function" else "sql", confidence=0.7
             )
-            return {"route": default_route, "served_tier": "template"}
+            return {"route": default_route, "served_tier": merge_tier(state.get("served_tier"), "template")}

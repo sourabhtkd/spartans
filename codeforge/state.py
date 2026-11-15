@@ -82,3 +82,17 @@ class CodeForgeState(TypedDict, total=False):
     ticket: HandoffTicket | None
     report: str
     events: list[dict[str, Any]]
+    test_regen_count: int
+    tests_frozen: bool
+    tests_valid: bool
+    escalate_reason: str
+
+
+_TIER_RANK = {"cache": 0, "primary": 1, "fallback": 2, "template": 3, "refused": 4}
+
+
+def merge_tier(previous: str | None, new: str) -> str:
+    """Keep the most-degraded tier seen in a run so the report never understates degradation."""
+    if not previous:
+        return new
+    return new if _TIER_RANK.get(new, 1) >= _TIER_RANK.get(previous, 1) else previous

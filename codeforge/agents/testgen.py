@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Any
 
-from codeforge.llm import resilient_invoke
-from codeforge.state import CodeForgeState, GeneratedTests
+from codeforge.llm import AllModelsDown, resilient_invoke
+from codeforge.state import CodeForgeState, GeneratedTests, merge_tier
 
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "testgen.md"
 
@@ -26,12 +26,12 @@ class TestGenAgent:
         ]
         try:
             generated, tier = resilient_invoke("testgen", messages, GeneratedTests)
-            return {"tests": generated.tests, "served_tier": tier}
-        except Exception:  # noqa: BLE001
+            return {"tests": generated.tests, "served_tier": merge_tier(state.get("served_tier"), tier)}
+        except AllModelsDown:
             from codeforge.resilience.templates import match_template
 
             search_text = f"{fn_name} {state.get('raw_request_masked', '')}"
             tpl = match_template(search_text)
             if tpl:
-                return {"tests": tpl.tests, "served_tier": "template"}
-            return {"tests": "", "served_tier": "refused"}
+                return {"tests": tpl.tests, "served_tier": merge_tier(state.get("served_tier"), "template")}
+            return {"tests": "", "served_tier": merge_tier(state.get("served_tier"), "refused")}

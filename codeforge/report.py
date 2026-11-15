@@ -31,12 +31,17 @@ def determine_status_message(state: CodeForgeState) -> str:
         return f"ℹ️ Request routed to '{route.kind}': {route.language} execution is currently unsupported/not enabled."
 
     run_result = state.get("run_result")
+    if run_result is None and state.get("tests_valid") is False:
+        return "⚠️ The generated tests were invalid, so nothing was executed. A handoff ticket was created."
     if run_result is None:
         return "ℹ️ Execution not run."
 
     if run_result.timed_out:
         timeout_s = get_settings().sandbox.get("timeout_s", 10)
         return f"⏱ Tests did not finish within {timeout_s}s and were killed."
+
+    if run_result.exit_code is None:
+        return f"ℹ️ No test result is available yet: {run_result.stdout or 'run did not complete'}"
 
     if run_result.exit_code == 0 and not run_result.timed_out:
         p = run_result.passed

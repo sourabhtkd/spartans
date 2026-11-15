@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Any
 
-from codeforge.llm import resilient_invoke
-from codeforge.state import CodeForgeState, GeneratedCode
+from codeforge.llm import AllModelsDown, resilient_invoke
+from codeforge.state import CodeForgeState, GeneratedCode, merge_tier
 
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "codegen.md"
 
@@ -23,7 +23,7 @@ class CodeGenAgent:
             user_content += (
                 f"\nREPAIR ATTEMPT #{attempts + 1}:\n"
                 f"Previous Code:\n```python\n{previous_code}\n```\n"
-                f"Failing Test / Error:\n{last_failing_test or run_result.stdout if run_result else 'Assertion failed'}\n"
+                f"Failing Test / Error:\n{last_failing_test or (run_result.stdout if run_result else '') or 'Assertion failed'}\n"
                 "Please fix the implementation to satisfy all test cases.\n"
             )
 
@@ -36,9 +36,9 @@ class CodeGenAgent:
             return {
                 "code": generated.code,
                 "attempts": attempts + 1,
-                "served_tier": tier,
+                "served_tier": merge_tier(state.get("served_tier"), tier),
             }
-        except Exception:  # noqa: BLE001
+        except AllModelsDown:
             from codeforge.resilience.templates import match_template
 
             search_text = f"{reqs.function_name if reqs else ''} {state.get('raw_request_masked', '')}"
@@ -47,10 +47,10 @@ class CodeGenAgent:
                 return {
                     "code": tpl.code,
                     "attempts": attempts + 1,
-                    "served_tier": "template",
+                    "served_tier": merge_tier(state.get("served_tier"), "template"),
                 }
             return {
                 "code": "",
                 "attempts": attempts + 1,
-                "served_tier": "refused",
+                "served_tier": merge_tier(state.get("served_tier"), "refused"),
             }
