@@ -3,7 +3,7 @@ import ast
 from codeforge.state import PolicyDecision
 
 DENY_IMPORTS = {
-    
+    "os",
     "sys",
     "subprocess",
     "shutil",
@@ -122,16 +122,17 @@ def evaluate_code_policy(code: str) -> PolicyDecision:
                 elif fn_name == "open":
                     approval_reasons.append("Call to 'open()' requires approval")
                 elif fn_name in {"getattr", "setattr", "delattr"}:
+                    if node.args and isinstance(node.args[0], ast.Name) and node.args[0].id in {"__builtins__", "builtins"}:
+                        deny_reasons.append(f"Denied access to builtins via {fn_name}()")
                     for arg in node.args:
-                        if (
-                            isinstance(arg, ast.Constant)
-                            and isinstance(arg.value, str)
-                            and arg.value.startswith("__")
-                            and arg.value.endswith("__")
-                        ):
-                            deny_reasons.append(
-                                f"Denied dynamic dunder access via {fn_name}('{arg.value}')"
-                            )
+                        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                            val = arg.value
+                            if val in DENY_CALL_NAMES:
+                                deny_reasons.append(f"Denied {fn_name} for restricted function '{val}'")
+                            elif val.startswith("__") and val.endswith("__") and val not in ALLOWED_DUNDERS:
+                                deny_reasons.append(
+                                    f"Denied dynamic dunder access via {fn_name}('{val}')"
+                                )
             elif isinstance(node.func, ast.Attribute):
                 attr_name = node.func.attr
                 if attr_name in DENY_CALL_NAMES:

@@ -270,5 +270,13 @@
     "input": "list_sum",
     "profile": "student_a",
     "expect": "list_sum.py"
+  },
+  {
+    "id": "gold_flywheel_35",
+    "tier": "soft",
+    "kind": "correctness",
+    "input": "User says palindrome check failed for uppercase",
+    "profile": "student_a",
+    "expect": "palindrome.py"
   }
 ]

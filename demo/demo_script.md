@@ -1,0 +1,97 @@
+# CodeForge Live Demonstration Script
+
+This document provides a comprehensive, step-by-step presentation narrative for demonstrating **CodeForge**, a production-grade multi-agent natural language to verified code platform.
+
+---
+
+## 1. System Introduction & Philosophy (1 Minute)
+
+### Core Mantra
+> **"Model proposes, plain Python decides."**
+
+- LLMs propose code, tests, and routing hypotheses.
+- Plain Python strictly decides safety policies, execution boundaries, identity authorization, and pass/fail reporting.
+- An LLM prompt never decides whether code is safe to execute, and an LLM is never trusted to report whether tests passed.
+
+### Team Roles & Ownership
+1. **Pipeline & Graph Architect (Owner 1)**: LangGraph state machine orchestration, multi-agent reasoning chain (`Router`, `Requirements`, `CodeGen`, `TestGen`, `TestValidator`), and AST-based self-repair loops.
+2. **Security & Safety Engineer (Owner 2)**: Hard identity isolation (R1), PII redaction engine (Luhn credit cards & Verhoeff Aadhaar algorithms), pure AST policy gate (R2), and isolated tempdir subprocess sandbox runner with system resource limits (`rlimits`) and blocked network.
+3. **Reliability & Performance Engineer (Owner 3)**: Adaptive retry loops with full jitter backoff, circuit breakers, 60% chaos resilience, fail-closed offline template fallback (R5), guarded semantic caching (R4), and conversation compaction.
+4. **Quality & Human-in-the-Loop Lead (Owner 4)**: Golden set evaluation gate (R6) with hard/soft thresholds, CI automation, support ticket escalation, reviewer approval queue, and the 5-tab Gradio interface.
+
+---
+
+## 2. Interactive Execution: 4 Core Incidents (3 Minutes)
+
+Run the automated interactive demonstration script:
+```bash
+uv run python scripts/demo.py
+```
+
+### Incident 1: Student A — Happy Path Verification
+- **Scenario**: A student requests a standard utility: `"Write an is_palindrome function that checks if a string is a palindrome."`
+- **What Happens**:
+  1. `Ingress Guard`: Authenticates user from server configuration (`student_a`, role `student`). Role spoofing in prompts is ignored.
+  2. `Pipeline`: `Router` detects Python function -> `Requirements` defines signature -> `CodeGen` drafts solution -> `TestGen` drafts test cases -> `TestValidator` verifies AST syntax.
+  3. `Policy Gate`: Pure AST inspection scans imports, calls, and attributes. Verdict: **ALLOW**.
+  4. `Sandbox Runner`: Subprocess runs `pytest` in an isolated directory with scrubbed environment and disabled sockets. Exit code: **0**.
+  5. `Report`: Deterministic Jinja2 template formats results. Displays **"✅ Tests passed (1/1)"** strictly because exit code was 0.
+
+### Incident 2: Student B — Malicious OS Access Blocked by Pure AST Gate
+- **Scenario**: An adversarial user attempts a destructive attack: `"Write a cleanup script: import os; os.remove('/etc/passwd')"`
+- **What Happens**:
+  1. `Policy Gate`: Native Python `ast.parse()` inspects abstract syntax tree. Catches forbidden import `os` and denied call `os.remove`.
+  2. `Decision`: Verdict: **DENY**.
+  3. `Sandbox Safety`: Subprocess sandbox runner is **never invoked** (zero runtime execution).
+  4. `Report`: Delivers an honest refusal: `"❌ Refused by policy: Denied import 'os'. Nothing was executed."`
+
+### Incident 3: Student C — PII Scrubbing & Automated P1 Escalation
+- **Scenario**: A distressed student pastes sensitive API keys and personal identification: `"URGENT HELP! My instructor API key sk-live9988... and Aadhaar 2345 6789 0124 were exposed! I NEED A REAL HUMAN RIGHT NOW!!!"`
+- **What Happens**:
+  1. `PII Redaction`: Pre-LLM ingress scrubber masks OpenAI key to `[SECRET]` and Indian Aadhaar (validated via Verhoeff checksum) to `[AADHAAR]`.
+  2. `Escalation Engine`: Detects urgent keywords (`"REAL HUMAN"` + exclamation points) and creates a **Priority 1 (P1)** support ticket.
+  3. `Security Guarantee`: Ticket store and logs retain only masked content, ensuring zero sensitive data leaks.
+
+### Incident 4: Resilience Under Chaos — 60% Failure Rate
+- **Scenario**: Simulates upstream provider degradation with 60% transient `429 Too Many Requests` and `503 Service Unavailable` errors.
+- **What Happens**:
+  1. `Resilience Layer`: Retries with exponential backoff and randomized full jitter.
+  2. `Circuit Breaker`: Monitors consecutive failures to prevent cascading latency spikes.
+  3. `Fail-Closed Degraded Tier`: When models are unavailable, seamlessly routes to pre-verified offline deterministic templates.
+  4. `User Experience`: Tests pass with zero downtime, marking `served_tier: "template"`.
+
+---
+
+## 3. Live CI/CD Evaluation Gate Demonstration (1 Minute)
+
+Demonstrate how CodeForge's test suite prevents dangerous regressions:
+
+### Step 1: Trip the Gate Red
+```bash
+make gate-red
+```
+- **What Happens**: The script intentionally weakens security policy by removing `"os"` from `DENY_IMPORTS`.
+- **Outcome**: The golden evaluation gate (`evals/test_golden.py`) immediately fails with 100% hard pass threshold breached, naming `policy_deny_os` as the culprit.
+
+### Step 2: Restore the Gate Green
+```bash
+make gate-green
+```
+- **What Happens**: Pristine policy is restored and evals are rerun across all 35 golden cases.
+- **Outcome**: **100% hard pass rate** and **100% soft pass rate** achieved.
+
+---
+
+## 4. Gradio UI Walkthrough (1 Minute)
+
+Launch the interactive web dashboard:
+```bash
+uv run python -m codeforge.app_gradio
+```
+Open [http://localhost:7860](http://localhost:7860) to present the 5 tabs:
+
+1. **Tab 1: Chat**: Profile displayed read-only from config; submit code requests; view honest markdown reports with pass/fail counts; click 👍 or 👎 to send feedback directly to the golden set flywheel.
+2. **Tab 2: My Runs**: Strict user data isolation. Queries `RunStore.get_my_runs()` using the authenticated identity; foreign runs return 404.
+3. **Tab 3: Reviewer Queue**: Accessible only to users with the `instructor` role. Displays suspended runs paused by LangGraph `interrupt()`; allows approving or rejecting sensitive file/socket operations.
+4. **Tab 4: Tickets**: View all escalated human handoff tickets (P1/P2/P3) with masked context and SLA deadlines.
+5. **Tab 5: Ops Dashboard**: Real-time cost metering table, token consumption breakdown, circuit breaker states, and live chaos injection toggle.

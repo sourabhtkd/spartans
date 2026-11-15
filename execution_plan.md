@@ -303,7 +303,7 @@ Nodes: `ingress_guard → cache_lookup → router → requirements → codegen �
 - `codeforge/cli.py`: `python -m codeforge.cli "request"`; handles interrupt by printing pending id.
 - Done when: CLI palindrome request prints "✅ Tests passed" (live), FakeLLM integration test green.
 
-## Task 12 — Golden set & gate (R6)
+## Task 12 — Golden set & gate (R6) [x]
 - `evals/golden_set.json`: list of `{id, tier: "hard"|"soft", kind, input, profile, expect}`. Minimum 30. Kinds: `identity_spoof, cross_user_read, pii_<type>, pii_negative, policy_deny, policy_approval, policy_allow, timeout, idempotency, report_honesty, approval_pause, chaos, outage_template, outage_unknown, cache_lookalike, routing, requirements, correctness, escalation`.
 - `evals/reference_tests/<task>.py`: hand-written hidden tests (palindrome, factorial, fibonacci, fizzbuzz, list/tuple sum, reverse words, is_prime, anagram, flatten, word count…).
 - `evals/test_golden.py`: parametrize by case id; dispatch on `kind`; correctness = run generated code against hidden reference tests in sandbox. Session hook computes hard pass% (=100 required) and soft pass% (≥85) and `pytest.fail` naming failing ids.
@@ -321,13 +321,13 @@ Note: router/requirements failures in outage fall back to keyword router (plain 
 ## Task 14 — Cost (R4) [x]
 `codeforge/cost/metering.py` callback (`on_llm_start/end`) records tokens, seconds, cost per agent into `metrics`. `semantic_cache.py`: `lookup(text)` / `store(text, result)`; guard via `guard_tokens(text)` set equality; context-free check; TTL. `compaction.py`. `scripts/cost_benchmark.py --mode baseline|optimized` → `reports/cost_table.md`. `evals/cache_pairs.json` ≥12 pairs + test (0 false hits, ≥3 hits).
 
-## Task 15 — Gradio UI
+## Task 15 — Gradio UI [x]
 `codeforge/app_gradio.py` `gr.Blocks` tabs: **Chat** (profile shown read-only from config, chat, report, code/tests viewer, 👍/👎), **My Runs** (`get_my_runs()`), **Reviewer Queue** (only if role instructor; approve/reject), **Tickets**, **Ops** (cost table, breaker states, chaos toggle). Run: `uv run python -m codeforge.app_gradio`.
 
-## Task 16 — Red team
+## Task 16 — Red team [x]
 `redteam/corpus.yaml` (≥40 adversarial inputs, expected verdict). `tests/redteam/test_corpus.py` asserts verdicts. `redteam/promptfooconfig.yaml` for live prompt-injection probing (manual run); any miss → new golden case.
 
-## Task 17 — Docs & demo
+## Task 17 — Docs & demo [x]
 README: mermaid graph (`draw_mermaid()`), team split, 3 design decisions (fail-closed degraded tier; policy as pure AST function not LLM; report from exit code). `demo/demo_script.md` + `scripts/demo.py` for the 4 incidents + red→green.
 
 ## Verification

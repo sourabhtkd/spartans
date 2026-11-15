@@ -11,15 +11,14 @@ gate:
 
 gate-red:
 	@echo "Weakening policy rule (removing 'os' from DENY list) to demonstrate gate tripping red..."
-	@sed -i.bak 's/"os",//g' codeforge/policy/code_policy.py
+	@cp codeforge/policy/code_policy.py /tmp/code_policy_clean.py
+	@python3 -c "p = 'codeforge/policy/code_policy.py'; s = open(p).read(); open(p, 'w').write(s.replace('\"os\",', ''))"
 	@echo "Running golden eval gate (expecting failure on os deny case)..."
 	-uv run pytest evals/test_golden.py -k "policy_deny_os"
-	@git checkout codeforge/policy/code_policy.py
-	@rm -f codeforge/policy/code_policy.py.bak
-	@echo "Gate tripped red as expected and demonstrated!"
+	@cp /tmp/code_policy_clean.py codeforge/policy/code_policy.py
+	@rm -f /tmp/code_policy_clean.py
+	@echo "Gate tripped red as expected and pristine policy restored!"
 
 gate-green:
-	@echo "Ensuring pristine code policy..."
-	@git checkout codeforge/policy/code_policy.py
 	@echo "Running golden eval gate..."
 	uv run pytest evals/test_golden.py -v
