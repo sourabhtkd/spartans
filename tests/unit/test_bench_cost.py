@@ -15,7 +15,7 @@ def test_cost_script_is_fixed_20_with_repeats():
 
 
 def test_optimized_is_cheaper_with_no_quality_drop_offline():
-    script = load_script()[:10]
+    script = load_script()[:12]
     base = run_mode("baseline", script, offline=True)
     opt = run_mode("optimized", script, offline=True)
     assert base.cache_hits == 0 and opt.cache_hits > 0
