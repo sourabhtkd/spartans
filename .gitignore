@@ -10,3 +10,10 @@ dist/
 build/
 .ruff_cache/
 .mypy_cache/
+checkpoints.db*
+codeforge.db*
+*.db-shm
+*.db-wal
+graphify-out/
+feedback.jsonl
+.gate_backup/

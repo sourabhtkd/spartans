@@ -334,3 +334,24 @@ README: mermaid graph (`draw_mermaid()`), team split, 3 design decisions (fail-c
 - `uv run pytest tests/unit` all green; `uv run pytest evals` gate green; CI green on push.
 - `uv run python -m codeforge.cli` scenarios: Student A palindrome passes; Student B denied, nothing executed (sandbox call count 0); Student C key shows `[SECRET]` in logs/Langfuse trace; `while True: pass` reported as timeout; same request twice runs once; file-write code pauses until approved in Gradio.
 - Weaken a rule → gate red with case name → restore → green.
+
+---
+# PLAN REVISIONS v2 (2026-11-15, after implementation review)
+These amendments **override** the earlier task text where they conflict. Execution details: `fix_plan.md`.
+
+| Task | Change | Fix ref |
+|---|---|---|
+| 1 Identity | Graph input never carries `identity`; `ingress_guard` always sets it from config. | F2 |
+| 2 PII | Mask **before** `graph.invoke` (new `codeforge/entrypoint.py::submit`) so checkpoints never hold raw PII. Sandbox output masked before truncation. | F2, F14 |
+| 3 LLM wrapper | Callbacks (metering + Langfuse v3/v2) attached on every call; clients cached, `timeout=30`, provider retries off; agents catch only `AllModelsDown`. | F8, F17 |
+| 4 Observability | Context-bound `thread_id/user_id/agent`; per-node events; Langfuse tags. | F19 |
+| 5 Agents | TestValidator **gates** (regen once, else escalate); generated tests verified against template/reference impl; evaluator wired as advisory node. | F7, F13 |
+| 6 Policy | Added deny rules: bare/subscripted `__builtins__`, non-constant `getattr` arg, relative imports, dangerous attribute calls (`system`, `popen`, `remove`, …), private/OS modules (`_socket`, `posix`, `resource`, …), dunder string literals. `POLICY_VERSION` constant. | F1 |
+| 7 Sandbox | Fixed `PATH`, `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, `RLIMIT_NPROC/NOFILE`, `unshare -rn` on Linux, optional Docker backend. | F14 |
+| 8 Store | Atomic idempotency via `claim()` + unique key; `status` column; cached engine, WAL, config paths. | F6, F18 |
+| 9 HITL | `resume_approval` takes approver from **server config**, refuses non-instructors; unique audit id per decision; approval expiry implemented; Reviewer tab hidden for students; escalation uses session denial counter and a stricter human-request regex. | F5, F15, F16 |
+| 11 Graph | Fail closed: missing policy → refuse; empty/refused code → escalate (no sandbox); repair loop = `codegen → policy_gate` with **frozen tests**; cache hits also pass validator. | F4, F7 |
+| 12 Golden/CI | ≥45 cases; soft ≥12 calling real agents via cassettes (`evals/cassettes/`, `--record`); tautological routing checks removed; new hard cases per fix; `scripts/gate_demo.py` safe red→green; CI adds gitleaks; mypy must pass; pre-commit. | F3, F11 |
+| 13 Resilience | Breaker params from config with failure window; class/status-based transient classifier; template synonyms; chaos log summary computed, requires live key. | F10, F17 |
+| 14 Cost | Benchmark = fixed 20 requests, baseline vs optimized, numbers read from `metrics`; computed verdict. Cache key = sha256(text+role+policy_version), role-scoped lookups, extra guard words, stable fallback hash; compaction wired. | F9, F12, F13 |
+| 17 Docs | Regenerate mermaid, add bypass incident to demo, document new design decisions. | F20 |

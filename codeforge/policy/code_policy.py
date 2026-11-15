@@ -2,6 +2,25 @@ import ast
 
 from codeforge.state import PolicyDecision
 
+POLICY_VERSION = "2"
+
+DENY_NAMES = {"__builtins__", "builtins", "__loader__", "__spec__"}
+
+DENY_ATTR_CALLS = {
+    "system", "popen", "spawn", "spawnl", "spawnv", "execv", "execve", "execl",
+    "fork", "kill", "remove", "unlink", "rmtree", "rmdir", "removedirs", "chmod", "chown",
+}
+
+DENY_DUNDER_STRINGS = {
+    "__import__", "__subclasses__", "__globals__", "__builtins__",
+    "__code__", "__class__", "__bases__", "__mro__",
+}
+
+PRIVATE_DENY_MODULES = {
+    "posix", "nt", "_socket", "_posixsubprocess", "resource", "gc",
+    "inspect", "code", "codeop", "marshal",
+}
+
 DENY_IMPORTS = {
     "os",
     "sys",
@@ -74,6 +93,10 @@ ALLOWED_DUNDERS = {
 }
 
 
+def _is_denied_module(root: str) -> bool:
+    return root.startswith("_") or root in PRIVATE_DENY_MODULES
+
+
 def evaluate_code_policy(code: str) -> PolicyDecision:
     """Evaluates code safety purely through AST inspection.
     Never executes code.
@@ -95,7 +118,7 @@ def evaluate_code_policy(code: str) -> PolicyDecision:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 mod_root = alias.name.split(".")[0]
-                if mod_root in DENY_IMPORTS:
+                if mod_root in DENY_IMPORTS or _is_denied_module(mod_root):
                     deny_reasons.append(f"Denied import '{alias.name}'")
                 elif mod_root in NEEDS_APPROVAL_IMPORTS:
                     approval_reasons.append(f"Import requires approval: '{alias.name}'")
@@ -103,9 +126,11 @@ def evaluate_code_policy(code: str) -> PolicyDecision:
                     approval_reasons.append(f"Unknown import requires approval: '{alias.name}'")
 
         elif isinstance(node, ast.ImportFrom):
-            if node.module:
+            if node.level and node.level > 0:
+                deny_reasons.append("Denied relative import")
+            elif node.module:
                 mod_root = node.module.split(".")[0]
-                if mod_root in DENY_IMPORTS:
+                if mod_root in DENY_IMPORTS or _is_denied_module(mod_root):
                     deny_reasons.append(f"Denied import '{node.module}'")
                 elif mod_root in NEEDS_APPROVAL_IMPORTS:
                     approval_reasons.append(f"Import requires approval: '{node.module}'")
@@ -121,7 +146,13 @@ def evaluate_code_policy(code: str) -> PolicyDecision:
                     deny_reasons.append(f"Denied call to '{fn_name}()'")
                 elif fn_name == "open":
                     approval_reasons.append("Call to 'open()' requires approval")
-                elif fn_name in {"getattr", "setattr", "delattr"}:
+                elif fn_name == "type" and len(node.args) == 3:
+                    approval_reasons.append("Dynamic class creation via type() requires approval")
+                elif fn_name in {"getattr", "setattr", "delattr", "hasattr"}:
+                    if len(node.args) < 2 or not (
+                        isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)
+                    ):
+                        deny_reasons.append(f"Denied dynamic attribute access via {fn_name}()")
                     if node.args and isinstance(node.args[0], ast.Name) and node.args[0].id in {"__builtins__", "builtins"}:
                         deny_reasons.append(f"Denied access to builtins via {fn_name}()")
                     for arg in node.args:
@@ -137,10 +168,20 @@ def evaluate_code_policy(code: str) -> PolicyDecision:
                 attr_name = node.func.attr
                 if attr_name in DENY_CALL_NAMES:
                     deny_reasons.append(f"Denied call to '{attr_name}()'")
+                elif attr_name in DENY_ATTR_CALLS:
+                    deny_reasons.append(f"Denied call to '.{attr_name}()'")
                 elif attr_name == "open":
                     approval_reasons.append("Call to 'open()' requires approval")
 
         # 3. Attribute access (dunder escapes)
+        elif isinstance(node, ast.Name):
+            if node.id in DENY_NAMES:
+                deny_reasons.append(f"Denied reference to '{node.id}'")
+
+        elif isinstance(node, ast.Constant):
+            if isinstance(node.value, str) and any(d in node.value for d in DENY_DUNDER_STRINGS):
+                deny_reasons.append("Denied dunder string literal")
+
         elif isinstance(node, ast.Attribute):
             attr = node.attr
             if attr.startswith("__") and attr.endswith("__") and attr not in ALLOWED_DUNDERS:

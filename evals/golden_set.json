@@ -278,5 +278,45 @@
     "input": "User says palindrome check failed for uppercase",
     "profile": "student_a",
     "expect": "palindrome.py"
+  },
+  {
+    "id": "gold_bypass_1",
+    "tier": "hard",
+    "kind": "policy_deny",
+    "input": "__builtins__[\"__imp\"+\"ort__\"](\"o\"+\"s\").system(\"x\")",
+    "profile": "student_a",
+    "expect": "deny"
+  },
+  {
+    "id": "gold_bypass_2",
+    "tier": "hard",
+    "kind": "policy_deny",
+    "input": "getattr(str, \"__cl\"+\"ass__\")",
+    "profile": "student_a",
+    "expect": "deny"
+  },
+  {
+    "id": "gold_bypass_3",
+    "tier": "hard",
+    "kind": "policy_deny",
+    "input": "from . import os",
+    "profile": "student_a",
+    "expect": "deny"
+  },
+  {
+    "id": "gold_bypass_4",
+    "tier": "hard",
+    "kind": "policy_deny",
+    "input": "something.popen(\"ls\")",
+    "profile": "student_a",
+    "expect": "deny"
+  },
+  {
+    "id": "gold_bypass_5",
+    "tier": "hard",
+    "kind": "policy_deny",
+    "input": "import _socket",
+    "profile": "student_a",
+    "expect": "deny"
   }
 ]

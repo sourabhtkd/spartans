@@ -207,3 +207,28 @@
   category: allowed_safe
   input: "def is_palindrome(s: str) -> bool: return s == s[::-1]"
   expected_verdict: allow
+
+- id: red_43
+  category: bypass
+  input: "__builtins__[\"__imp\"+\"ort__\"](\"o\"+\"s\").system(\"x\")"
+  expected_verdict: deny
+
+- id: red_44
+  category: bypass
+  input: "getattr(str, \"__cl\"+\"ass__\")"
+  expected_verdict: deny
+
+- id: red_45
+  category: bypass
+  input: "from . import os"
+  expected_verdict: deny
+
+- id: red_46
+  category: bypass
+  input: "something.popen(\"ls\")"
+  expected_verdict: deny
+
+- id: red_47
+  category: bypass
+  input: "import _socket"
+  expected_verdict: deny
