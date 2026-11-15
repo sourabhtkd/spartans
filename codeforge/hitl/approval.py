@@ -1,54 +1,80 @@
+"""Human-in-the-loop approval for risky (needs_approval) code.
+
+Security properties:
+  * The approver's identity is taken from server-side config in ``resume_approval``,
+    never from a caller-supplied payload.
+  * Only instructors may approve; self-approval is refused.
+  * Pending approvals expire (fail closed) via ``expire_stale``.
+  * Every request gets its own audit row; decisions never overwrite another request's row.
+"""
 import hashlib
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from langgraph.types import Command, interrupt
 
 from codeforge.config import current_identity, get_settings
+from codeforge.observability import get_logger
 from codeforge.state import ApprovalDecision, CodeForgeState, PolicyDecision
 from codeforge.store.db import Approval, init_db
 
+logger = get_logger("approval")
+
+SYSTEM_EXPIRY_ID = "system:expiry"
+
+
+def _get_or_create_pending(thread_id: str, requester_id: str, code_hash: str, reasons: str) -> str:
+    """Return the id of this thread's pending approval row, creating it if needed.
+
+    LangGraph re-executes the node from the top when resuming after interrupt(), so this
+    must be idempotent: a resume reuses the pending row rather than creating a duplicate.
+    """
+    sf = init_db()
+    with sf() as session:
+        rec = (
+            session.query(Approval)
+            .filter(Approval.thread_id == thread_id, Approval.verdict == "pending")
+            .first()
+        )
+        if rec is None:
+            rec = Approval(
+                approval_id=f"appr_{thread_id}_{uuid.uuid4().hex[:6]}",
+                thread_id=thread_id,
+                requester_id=requester_id,
+                code_hash=code_hash,
+                reasons=reasons,
+                verdict="pending",
+                comment="",
+            )
+            session.add(rec)
+            session.commit()
+        return str(rec.approval_id)
+
 
 def human_approval_node(state: CodeForgeState) -> dict[str, Any]:
-    """Human-in-the-loop approval node.
-    Pauses graph execution via interrupt() until an instructor provides an approval decision.
-    Validates approver identity and blocks self-approval.
-    """
+    """Pause the graph via interrupt() until an instructor decides. Fails closed."""
     code = state.get("code", "")
     tests = state.get("tests", "")
     policy = state.get("policy", PolicyDecision(verdict="needs_approval", reasons=[]))
-    identity = state.get("identity", current_identity())
+    identity = state.get("identity") or current_identity()
     requester_id = identity.user_id
-    idem_key = state.get("idempotency_key", "")
+    thread_id = state.get("thread_id", "default")
     code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
 
-    # Save pending record in DB
-    session_factory = init_db()
-    with session_factory() as session:
-        thread_id = state.get("thread_id", "default")
-        pending_rec = Approval(
-            approval_id=f"appr_{thread_id}",
-            thread_id=thread_id,
-            requester_id=requester_id,
-            code_hash=code_hash,
-            reasons="; ".join(policy.reasons),
-            verdict="pending",
-            comment="",
-        )
-        session.merge(pending_rec)
-        session.commit()
+    approval_id = _get_or_create_pending(thread_id, requester_id, code_hash, "; ".join(policy.reasons))
 
-    # Pause execution until resumed
-    raw_decision = interrupt({
-        "thread_id": state.get("thread_id", ""),
-        "code": code,
-        "tests": tests,
-        "reasons": policy.reasons,
-        "requester": requester_id,
-        "idem_key": idem_key,
-    })
+    raw_decision = interrupt(
+        {
+            "thread_id": thread_id,
+            "code": code,
+            "tests": tests,
+            "reasons": policy.reasons,
+            "requester": requester_id,
+            "idem_key": state.get("idempotency_key", ""),
+        }
+    )
 
-    # Validate decision
     if isinstance(raw_decision, dict):
         decision = ApprovalDecision(**raw_decision)
     elif isinstance(raw_decision, ApprovalDecision):
@@ -56,45 +82,104 @@ def human_approval_node(state: CodeForgeState) -> dict[str, Any]:
     else:
         decision = ApprovalDecision(approved=False, approver_id="", comment="Invalid decision payload")
 
-    # Look up approver role from settings profiles
-    settings = get_settings()
-    approver_role = "student"
-    for prof in settings.profiles.values():
-        if prof.user_id == decision.approver_id:
-            approver_role = prof.role
-            break
+    # Defence in depth (resume_approval already enforces both rules).
+    if decision.approved:
+        approver_role = "student"
+        for prof in get_settings().profiles.values():
+            if prof.user_id == decision.approver_id:
+                approver_role = prof.role
+                break
+        if approver_role != "instructor":
+            decision = ApprovalDecision(
+                approved=False,
+                approver_id=decision.approver_id,
+                comment="Rejected: only instructors may approve code.",
+            )
+        elif decision.approver_id == requester_id:
+            decision = ApprovalDecision(
+                approved=False,
+                approver_id=decision.approver_id,
+                comment="Rejected: self-approval is forbidden.",
+            )
 
-    # Security rule 1: Only instructors may approve
-    if approver_role != "instructor":
-        decision = ApprovalDecision(
-            approved=False,
-            approver_id=decision.approver_id,
-            comment="Rejected: only instructors may approve code.",
-        )
-    # Security rule 2: Self-approval is forbidden
-    elif decision.approver_id == requester_id:
-        decision = ApprovalDecision(
-            approved=False,
-            approver_id=decision.approver_id,
-            comment="Rejected: self-approval is forbidden.",
-        )
-
-    # Update DB record with final verdict
-    with session_factory() as session:
-        rec = session.query(Approval).filter(Approval.thread_id == state.get("thread_id", "default")).first()
-        if rec:
+    with init_db()() as session:
+        rec = session.get(Approval, approval_id)
+        if rec is not None:
             rec.approver_id = decision.approver_id
             rec.verdict = "approved" if decision.approved else "rejected"
             rec.comment = decision.comment
             rec.updated_at = datetime.now(UTC)
             session.commit()
-
+    logger.info(
+        "approval_decided", thread_id=thread_id, verdict="approved" if decision.approved else "rejected"
+    )
     return {"approval": decision}
 
 
-def resume_approval(graph: Any, thread_id: str, decision: ApprovalDecision) -> Any:
-    """Resumes an interrupted graph run with the reviewer's approval decision."""
-    return graph.invoke(
-        Command(resume=decision.model_dump()),
-        config={"configurable": {"thread_id": thread_id}},
+def _config(thread_id: str) -> dict[str, Any]:
+    return {"configurable": {"thread_id": thread_id}}
+
+
+def resume_approval(graph: Any, thread_id: str, approved: bool, comment: str = "") -> Any:
+    """Resume a paused run. The approver is the *server-side* current identity.
+
+    Raises PermissionError for non-instructors and for self-approval (the run stays pending
+    so a different instructor can decide), and ValueError if nothing is pending.
+    """
+    approver = current_identity()
+    if approver.role != "instructor":
+        raise PermissionError("Only instructors may approve or reject pending code.")
+
+    snap = graph.get_state(_config(thread_id))
+    if "human_approval" not in tuple(snap.next):
+        raise ValueError(f"No pending approval for thread '{thread_id}'.")
+    requester = snap.values.get("identity")
+    if approved and requester is not None and requester.user_id == approver.user_id:
+        raise PermissionError("Self-approval is forbidden; another instructor must approve.")
+
+    decision = ApprovalDecision(
+        approved=approved,
+        approver_id=approver.user_id,
+        comment=comment or ("Approved by instructor" if approved else "Rejected by instructor"),
     )
+    return graph.invoke(Command(resume=decision.model_dump()), config=_config(thread_id))
+
+
+def list_pending() -> list[Approval]:
+    with init_db()() as session:
+        return list(session.query(Approval).filter(Approval.verdict == "pending").all())
+
+
+def expire_stale(graph: Any, now: datetime | None = None, expiry_minutes: float | None = None) -> list[str]:
+    """Reject (fail closed) every approval pending longer than the configured expiry.
+
+    Returns the thread ids that were expired.
+    """
+    minutes = (
+        expiry_minutes
+        if expiry_minutes is not None
+        else float(get_settings().approval.get("expiry_minutes", 30))
+    )
+    now_naive = (now or datetime.now(UTC)).replace(tzinfo=None)
+    cutoff = now_naive - timedelta(minutes=minutes)
+    expired: list[str] = []
+    for rec in list_pending():
+        created = rec.created_at.replace(tzinfo=None) if rec.created_at else now_naive
+        if created >= cutoff:
+            continue
+        payload = ApprovalDecision(
+            approved=False, approver_id=SYSTEM_EXPIRY_ID, comment="Rejected: approval request expired."
+        ).model_dump()
+        try:
+            graph.invoke(Command(resume=payload), config=_config(rec.thread_id))
+        except Exception as exc:  # noqa: BLE001 - one bad thread must not block the rest
+            logger.warning("expire_failed", thread_id=rec.thread_id, error=str(exc))
+            with init_db()() as session:
+                row = session.get(Approval, rec.approval_id)
+                if row is not None:
+                    row.verdict = "rejected"
+                    row.approver_id = SYSTEM_EXPIRY_ID
+                    row.comment = "Rejected: approval request expired."
+                    session.commit()
+        expired.append(rec.thread_id)
+    return expired

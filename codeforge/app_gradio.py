@@ -1,13 +1,13 @@
 import json
 import os
+from typing import Any
 
 import gradio as gr
 
 from codeforge.config import clear_settings_cache, current_identity, get_settings
 from codeforge.entrypoint import submit
 from codeforge.graph import build_graph
-from codeforge.hitl.approval import resume_approval
-from codeforge.state import ApprovalDecision
+from codeforge.hitl.approval import expire_stale, resume_approval
 from codeforge.store.db import Approval, Feedback, Metric, Ticket, init_db
 from codeforge.store.runs import RunStore
 
@@ -73,6 +73,9 @@ def get_my_runs_table() -> list[list[str]]:
 
 def get_pending_approvals() -> list[list[str]]:
     sf = init_db()
+    if current_identity().role != "instructor":
+        return []
+    expire_stale(build_graph())
     with sf() as session:
         approvals = session.query(Approval).filter(Approval.verdict == "pending").all()
         return [
@@ -82,17 +85,14 @@ def get_pending_approvals() -> list[list[str]]:
 
 
 def process_review_decision(thread_id: str, action: str, comment: str) -> str:
-    ident = current_identity()
-    approved = (action == "Approve")
-    decision = ApprovalDecision(
-        approved=approved,
-        approver_id=ident.user_id,
-        comment=comment or ("Approved by instructor" if approved else "Rejected by instructor"),
-    )
+    """Approve/Reject. The approver identity comes from server config inside resume_approval."""
+    approved = action == "Approve"
     graph = build_graph()
     try:
-        resume_approval(graph, thread_id, decision)
+        resume_approval(graph, thread_id, approved, comment)
         return f"Decision '{action}' applied to thread {thread_id}."
+    except PermissionError as e:
+        return f"⛔ Not permitted: {e}"
     except Exception as e:  # noqa: BLE001
         return f"Failed to resume thread: {e}"
 
@@ -123,11 +123,15 @@ def get_ops_metrics() -> str:
     return cost_summary
 
 
-def update_profile(profile_name: str) -> str:
+def update_profile(profile_name: str) -> tuple[str, Any]:
+    """Demo-only profile switch (identity still comes from config profiles, never from text)."""
     os.environ["CODEFORGE_PROFILE"] = profile_name
     clear_settings_cache()
     ident = current_identity()
-    return f"Active Identity: [{ident.user_id}] | Role: {ident.role}"
+    return (
+        f"**Active Identity**: `[{ident.user_id}]` | **Role**: `{ident.role}`",
+        gr.update(visible=ident.role == "instructor"),
+    )
 
 
 def build_app() -> gr.Blocks:
@@ -146,7 +150,6 @@ def build_app() -> gr.Blocks:
             profile_badge = gr.Markdown(
                 f"**Active Identity**: `[{initial_ident.user_id}]` | **Role**: `{initial_ident.role}`"
             )
-            profile_dropdown.change(update_profile, inputs=[profile_dropdown], outputs=[profile_badge])
 
         with gr.Tabs():
             # 1. Chat Tab
@@ -201,7 +204,7 @@ def build_app() -> gr.Blocks:
                 refresh_runs_btn.click(get_my_runs_table, outputs=[runs_table])
 
             # 3. Reviewer Queue Tab
-            with gr.Tab("🛡️ Reviewer Queue"):
+            with gr.Tab("🛡️ Reviewer Queue", visible=initial_ident.role == "instructor") as reviewer_tab:
                 gr.Markdown("Pending risky code approvals (restricted to Instructor/Approver role).")
                 refresh_appr_btn = gr.Button("Refresh Pending Approvals")
                 approvals_table = gr.Dataframe(
@@ -245,6 +248,9 @@ def build_app() -> gr.Blocks:
                 refresh_ops_btn = gr.Button("Refresh Metrics")
                 refresh_ops_btn.click(get_ops_metrics, outputs=[ops_summary])
 
+    profile_dropdown.change(
+        update_profile, inputs=[profile_dropdown], outputs=[profile_badge, reviewer_tab]
+    )
     return demo
 
 

@@ -6,7 +6,6 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from codeforge.graph import build_graph
 from codeforge.hitl.approval import resume_approval
 from codeforge.state import (
-    ApprovalDecision,
     GeneratedCode,
     GeneratedTests,
     Requirements,
@@ -97,7 +96,7 @@ def test_graph_policy_denied(fake_llm: FakeLLM):
     assert state.values.get("run_result") is None
 
 
-def test_graph_interrupt_and_resume(fake_llm: FakeLLM):
+def test_graph_interrupt_and_resume(fake_llm: FakeLLM, as_profile):
     # Needs approval code (e.g. open file)
     fake_llm.set_response(
         "codegen",
@@ -141,10 +140,8 @@ def test_graph_interrupt_and_resume(fake_llm: FakeLLM):
     assert state.next and "human_approval" in state.next
 
     # Resume with instructor approval
-    decision = ApprovalDecision(
-        approved=True, approver_id="u_prof", comment="Approved by professor"
-    )
-    resume_approval(graph, thread_id, decision)
+    as_profile("instructor")  # approver identity comes from server-side config
+    resume_approval(graph, thread_id, True, "Approved by professor")
 
     final_state = graph.get_state(config)
     assert final_state.values.get("approval").approved is True
