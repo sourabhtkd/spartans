@@ -3,8 +3,8 @@ import sqlite3
 import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-from codeforge.graph import build_graph
 from codeforge.hitl.approval import resume_approval
+from codeforge.pipeline import build_graph
 from codeforge.state import (
     GeneratedCode,
     GeneratedTests,

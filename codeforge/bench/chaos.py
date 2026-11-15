@@ -16,7 +16,7 @@ from codeforge import llm
 from codeforge.bench.offline import SimulatedLLM
 from codeforge.config import clear_settings_cache
 from codeforge.entrypoint import submit
-from codeforge.graph import build_graph
+from codeforge.pipeline import build_graph
 
 TEMPLATE_TASKS = [
     "Write an is_palindrome function",

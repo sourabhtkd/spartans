@@ -19,7 +19,7 @@ from sqlalchemy import func
 from codeforge.bench.chaos import isolated_run
 from codeforge.config import get_settings
 from codeforge.entrypoint import submit
-from codeforge.graph import build_graph
+from codeforge.pipeline import build_graph
 from codeforge.sandbox.runner import run_pytest_sandboxed
 from codeforge.store.db import Metric, init_db
 

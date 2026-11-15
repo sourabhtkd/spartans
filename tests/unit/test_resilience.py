@@ -3,7 +3,7 @@ import random
 import pytest
 
 from codeforge.config import clear_settings_cache
-from codeforge.graph import build_graph
+from codeforge.pipeline import build_graph
 from codeforge.resilience.breaker import CircuitBreaker
 from codeforge.resilience.retry import (
     calculate_backoff,

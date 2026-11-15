@@ -26,7 +26,7 @@ def test_full_graph_logs_are_structured_bound_and_pii_free(capsys, monkeypatch):
     import json
 
     from codeforge.entrypoint import submit
-    from codeforge.graph import build_graph
+    from codeforge.pipeline import build_graph
     from codeforge.state import (
         GeneratedCode,
         GeneratedTests,

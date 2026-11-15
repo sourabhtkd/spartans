@@ -38,7 +38,7 @@ def submit(
 ) -> SubmitResult:
     """Mask the request, run the graph, and return the resulting state snapshot."""
     if graph is None:
-        from codeforge.graph import build_graph
+        from codeforge.pipeline import build_graph
 
         graph = build_graph()
     tid = thread_id or new_thread_id()

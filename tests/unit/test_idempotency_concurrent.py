@@ -1,7 +1,7 @@
 import threading
 import time
 
-import codeforge.graph as g
+import codeforge.pipeline.nodes as g
 from codeforge.state import RunResult
 from codeforge.store.runs import RunStore
 

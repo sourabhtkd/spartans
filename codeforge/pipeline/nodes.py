@@ -1,11 +1,11 @@
-import os
-import sqlite3
-from typing import Any, Literal
+"""The graph's nodes. Each takes the pipeline state and returns the fields it wants to change.
 
-import structlog
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.errors import GraphInterrupt
-from langgraph.graph import END, START, StateGraph
+Order of the pipeline (see builder.py for the wiring and routing.py for the decisions):
+ingress_guard -> cache_lookup -> router -> requirements -> codegen -> testgen -> test_validator
+-> policy_gate -> (refuse | human_approval | sandbox_run) -> evaluator -> cache_store
+-> escalate_check -> report
+"""
+from typing import Any
 
 from codeforge.agents.codegen import CodeGenAgent
 from codeforge.agents.evaluator import EvaluatorAgent
@@ -17,63 +17,16 @@ from codeforge.config import current_identity, get_settings
 from codeforge.cost.compaction import compact_history, llm_summarize
 from codeforge.cost.semantic_cache import get_semantic_cache
 from codeforge.guard.pii import mask_text
-from codeforge.hitl.approval import human_approval_node
+from codeforge.hitl.approval import human_approval_node  # noqa: F401 - re-exported for builder.py
 from codeforge.hitl.handoff import create_ticket, should_escalate
 from codeforge.observability import get_logger
 from codeforge.policy.code_policy import evaluate_code_policy
-
-logger = get_logger("graph")
 from codeforge.report import render_report
 from codeforge.sandbox.runner import run_pytest_sandboxed
 from codeforge.state import CodeForgeState, PolicyDecision, RunResult
-from codeforge.store.runs import (
-    QuotaExceeded,
-    RunStore,
-    compute_idempotency_key,
-)
+from codeforge.store.runs import QuotaExceeded, RunStore, compute_idempotency_key
 
-
-def _summarise(out: dict[str, Any]) -> dict[str, Any]:
-    """Small, PII-free facts about a node's output for structured logs / traces."""
-    facts: dict[str, Any] = {}
-    if "policy" in out and out["policy"] is not None:
-        facts["policy_verdict"] = out["policy"].verdict
-    if "served_tier" in out:
-        facts["served_tier"] = out["served_tier"]
-    if "cache_hit" in out:
-        facts["cache_hit"] = out["cache_hit"]
-    if "run_result" in out and out["run_result"] is not None:
-        facts["exit_code"] = out["run_result"].exit_code
-        facts["timed_out"] = out["run_result"].timed_out
-    if out.get("ticket") is not None:
-        facts["ticket_priority"] = out["ticket"].priority
-    return facts
-
-
-def _traced(name: str, fn: Any) -> Any:
-    """Wrap a node: structured node_start / node_end / node_paused / node_error with duration."""
-    import time
-
-    def wrapper(state: CodeForgeState) -> Any:
-        structlog.contextvars.bind_contextvars(agent=name)
-        logger.info("node_start", node=name)
-        t0 = time.perf_counter()
-        try:
-            out = fn(state)
-        except Exception as exc:  # GraphInterrupt is an Exception subclass
-            kind = "node_paused" if isinstance(exc, GraphInterrupt) else "node_error"
-            logger.info(kind, node=name, duration_ms=round((time.perf_counter() - t0) * 1000, 1))
-            raise
-        logger.info(
-            "node_end",
-            node=name,
-            duration_ms=round((time.perf_counter() - t0) * 1000, 1),
-            **(_summarise(out) if isinstance(out, dict) else {}),
-        )
-        return out
-
-    wrapper.__name__ = name
-    return wrapper
+logger = get_logger("nodes")
 
 
 def _compacted_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -273,150 +226,3 @@ def report_node(state: CodeForgeState) -> dict[str, Any]:
         return {}
     rendered = render_report(state)
     return {"report": rendered}
-
-
-# Conditional routing predicates
-def route_after_ingress(state: CodeForgeState) -> Literal["report", "cache_lookup"]:
-    if state.get("quota_exceeded"):
-        return "report"
-    ticket = state.get("ticket")
-    if ticket and ticket.priority == "P1":
-        return "report"  # urgent: hand off immediately, short reply
-    return "cache_lookup"  # lower-priority human requests still get the pipeline
-
-
-def route_after_cache(state: CodeForgeState) -> Literal["test_validator", "router"]:
-    # Cache hits still pass the test validator, policy gate and sandbox.
-    if state.get("cache_hit"):
-        return "test_validator"
-    return "router"
-
-
-def route_after_codegen(
-    state: CodeForgeState,
-) -> Literal["testgen", "policy_gate", "escalate_check"]:
-    if not state.get("code", "").strip() or state.get("served_tier") == "refused":
-        return "escalate_check"  # nothing to run: never sandbox empty code
-    if state.get("tests_frozen"):
-        return "policy_gate"  # repair loop: tests are frozen, only code changes
-    return "testgen"
-
-
-def route_after_testgen(state: CodeForgeState) -> Literal["test_validator", "escalate_check"]:
-    if not state.get("tests", "").strip():
-        return "escalate_check"
-    return "test_validator"
-
-
-def route_after_validator(
-    state: CodeForgeState,
-) -> Literal["policy_gate", "testgen", "escalate_check"]:
-    if state.get("tests_valid", True):
-        return "policy_gate"
-    if state.get("test_regen_count", 0) < 2:
-        return "testgen"  # regenerate invalid tests once
-    return "escalate_check"
-
-
-def route_after_router(state: CodeForgeState) -> Literal["requirements", "report"]:
-    route = state.get("route")
-    if route and route.kind == "python_function":
-        return "requirements"
-    return "report"
-
-
-def route_after_policy(
-    state: CodeForgeState,
-) -> Literal["refuse", "human_approval", "sandbox_run"]:
-    policy = state.get("policy")
-    if policy is None:
-        return "refuse"  # fail closed
-    if policy.verdict == "deny":
-        return "refuse"
-    if policy.verdict == "needs_approval":
-        return "human_approval"
-    return "sandbox_run"
-
-
-def route_after_approval(
-    state: CodeForgeState,
-) -> Literal["sandbox_run", "escalate_check"]:
-    approval = state.get("approval")
-    if approval and approval.approved:
-        return "sandbox_run"
-    return "escalate_check"
-
-
-def route_after_sandbox(
-    state: CodeForgeState,
-) -> Literal["evaluator", "cache_store", "codegen", "escalate_check"]:
-    res = state.get("run_result")
-    attempts = state.get("attempts", 0)
-    if res and res.exit_code == 0 and not res.timed_out:
-        # Review only fresh model output: cache hits and templates have nothing new to critique.
-        if state.get("served_tier") in ("primary", "fallback") and not state.get("cache_hit"):
-            return "evaluator"
-        return "cache_store"
-    if attempts < 2:
-        return "codegen"
-    return "escalate_check"
-
-
-_CHECKPOINTERS: dict[str, SqliteSaver] = {}
-
-
-def _shared_checkpointer() -> SqliteSaver:
-    """One SqliteSaver per checkpoint path (config storage.checkpoint_path)."""
-    path = os.environ.get("CODEFORGE_CHECKPOINT_PATH") or str(
-        get_settings().storage.get("checkpoint_path", "checkpoints.db")
-    )
-    if path not in _CHECKPOINTERS:
-        conn = sqlite3.connect(path, check_same_thread=False)
-        conn.execute("PRAGMA journal_mode=WAL")
-        _CHECKPOINTERS[path] = SqliteSaver(conn)
-    return _CHECKPOINTERS[path]
-
-
-def build_graph(checkpointer: Any | None = None) -> Any:
-    """Builds and compiles the complete CodeForge StateGraph."""
-    graph = StateGraph(CodeForgeState)
-
-    # Add all nodes
-    graph.add_node("ingress_guard", _traced("ingress_guard", ingress_guard))
-    graph.add_node("cache_lookup", _traced("cache_lookup", cache_lookup))
-    graph.add_node("router", _traced("router", router_node))
-    graph.add_node("requirements", _traced("requirements", requirements_node))
-    graph.add_node("codegen", _traced("codegen", codegen_node))
-    graph.add_node("testgen", _traced("testgen", testgen_node))
-    graph.add_node("test_validator", _traced("test_validator", test_validator_node))
-    graph.add_node("policy_gate", _traced("policy_gate", policy_gate_node))
-    graph.add_node("refuse", _traced("refuse", refuse_node))
-    graph.add_node("human_approval", _traced("human_approval", human_approval_node))
-    graph.add_node("sandbox_run", _traced("sandbox_run", sandbox_run_node))
-    graph.add_node("evaluator", _traced("evaluator", evaluator_node))
-    graph.add_node("cache_store", _traced("cache_store", cache_store_node))
-    graph.add_node("escalate_check", _traced("escalate_check", escalate_check_node))
-    graph.add_node("report", _traced("report", report_node))
-
-    # Connect edges
-    graph.add_edge(START, "ingress_guard")
-    graph.add_conditional_edges("ingress_guard", route_after_ingress)
-    graph.add_conditional_edges("cache_lookup", route_after_cache)
-    graph.add_conditional_edges("router", route_after_router)
-    graph.add_edge("requirements", "codegen")
-    graph.add_conditional_edges("codegen", route_after_codegen)
-    graph.add_conditional_edges("testgen", route_after_testgen)
-    graph.add_conditional_edges("test_validator", route_after_validator)
-    graph.add_conditional_edges("policy_gate", route_after_policy)
-    graph.add_edge("refuse", "escalate_check")
-    graph.add_conditional_edges("human_approval", route_after_approval)
-    graph.add_conditional_edges("sandbox_run", route_after_sandbox)
-    graph.add_edge("evaluator", "cache_store")
-    graph.add_edge("cache_store", "escalate_check")
-    graph.add_edge("escalate_check", "report")
-    graph.add_edge("report", END)
-
-    if checkpointer is None:
-        checkpointer = _shared_checkpointer()
-
-    return graph.compile(checkpointer=checkpointer)

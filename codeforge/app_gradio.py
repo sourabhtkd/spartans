@@ -6,8 +6,8 @@ import gradio as gr
 
 from codeforge.config import clear_settings_cache, current_identity, get_settings
 from codeforge.entrypoint import submit
-from codeforge.graph import build_graph
 from codeforge.hitl.approval import expire_stale, resume_approval
+from codeforge.pipeline import build_graph
 from codeforge.store.db import Approval, Feedback, Metric, Ticket, init_db
 from codeforge.store.runs import RunStore
 

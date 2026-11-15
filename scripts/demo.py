@@ -12,8 +12,8 @@ import time
 from typing import Any
 
 from codeforge.entrypoint import submit
-from codeforge.graph import build_graph
 from codeforge.guard.pii import mask_text
+from codeforge.pipeline import build_graph
 from codeforge.policy.code_policy import evaluate_code_policy
 from codeforge.state import (
     GeneratedCode,

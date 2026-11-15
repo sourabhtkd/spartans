@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 import yaml
 
-import codeforge.graph as graph_module
+import codeforge.pipeline.nodes as graph_module
 from codeforge.agents.requirements import RequirementsAgent
 from codeforge.agents.router import RouterAgent
 from codeforge.config import Identity, current_identity
@@ -238,7 +238,7 @@ def h_checkpoint_no_pii(case: dict, env: Env) -> None:
 
     from langgraph.checkpoint.sqlite import SqliteSaver
 
-    from codeforge.graph import build_graph
+    from codeforge.pipeline import build_graph
 
     patch_llm(env.mp, scripted_fake(FIXED))
     db = env.tmp / "ckpt_golden.db"

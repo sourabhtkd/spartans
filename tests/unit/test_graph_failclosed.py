@@ -4,8 +4,9 @@ import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from codeforge.entrypoint import submit
-from codeforge.graph import build_graph, route_after_policy
 from codeforge.llm import AllModelsDown
+from codeforge.pipeline import build_graph
+from codeforge.pipeline.routing import route_after_policy
 from codeforge.state import GeneratedCode, GeneratedTests, Requirements, RouteDecision
 from tests.fakes import FakeLLM
 
@@ -28,7 +29,7 @@ def _patch(monkeypatch, fn):
 @pytest.fixture
 def sandbox_calls(monkeypatch):
     calls = []
-    import codeforge.graph as g
+    import codeforge.pipeline.nodes as g
     real = g.run_pytest_sandboxed
 
     def spy(*a, **k):

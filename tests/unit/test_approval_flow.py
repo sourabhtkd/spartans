@@ -6,8 +6,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from codeforge.config import Identity
 from codeforge.entrypoint import submit
-from codeforge.graph import build_graph
 from codeforge.hitl.approval import expire_stale, human_approval_node, resume_approval
+from codeforge.pipeline import build_graph
 from codeforge.state import GeneratedCode, GeneratedTests, Requirements, RouteDecision
 from codeforge.store.db import Approval, init_db
 from tests.fakes import FakeLLM
@@ -26,7 +26,7 @@ def graph(monkeypatch):
     for a in ("router", "requirements", "codegen", "testgen"):
         monkeypatch.setattr(f"codeforge.agents.{a}.resilient_invoke", fake)
     calls = []
-    import codeforge.graph as g
+    import codeforge.pipeline.nodes as g
     real = g.run_pytest_sandboxed
     monkeypatch.setattr(g, "run_pytest_sandboxed", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
     gr = build_graph(checkpointer=SqliteSaver(sqlite3.connect(":memory:", check_same_thread=False)))

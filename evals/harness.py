@@ -9,9 +9,9 @@ from typing import Any
 import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 
-import codeforge.graph as graph_module
-from codeforge.graph import build_graph
+import codeforge.pipeline.nodes as graph_module
 from codeforge.llm import AllModelsDown
+from codeforge.pipeline import build_graph
 from codeforge.state import GeneratedCode, GeneratedTests, Requirements, RouteDecision
 from tests.fakes import FakeLLM
 
